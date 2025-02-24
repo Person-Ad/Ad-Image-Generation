@@ -48,6 +48,6 @@ def main(
             download_gfile(file_ids[file_key], destination)
             
             if destination.suffix == ".zip":
-                unzip_file(destination, DATA_DIR)
+                unzip_file(destination, DATA_DIR / file_key)
         else:
             logger.warning(f"Unknown file key: {file_key}")
