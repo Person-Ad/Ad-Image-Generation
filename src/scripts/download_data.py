@@ -17,6 +17,7 @@ file_ids = {
     "test_lst_512_png": "1okF3Xo7-DLoV4czyBEFcEDJgOR65W61t",
     "test_data.json": "1AYheq5Xi1DwAJHnTNeLmTYeXNZDuF7lN",
     "train_data.json": "1YSJFvHissnsOdBPPRCZH8ELHAVFdRC44",
+    "poses_train_first_5000_zip": "1_6aJxobpD_KCIEDTZDYgfv3NWwpMe6qz",
 }
 
 # Destination folder

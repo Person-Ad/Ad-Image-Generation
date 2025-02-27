@@ -5,8 +5,9 @@ import zipfile
 import torchvision
 from PIL import Image
 import numpy as np
-
 from loguru import logger
+
+import wandb
 
 def download_gfile(file_id, destination: Path):
     if destination.exists():
@@ -38,3 +39,19 @@ def make_grid(images, size=256):
     for i, im in enumerate(images):
         output_im.paste(im.resize((size, size)), (i * size, 0))
     return output_im
+
+
+
+def build_wandb_run(config=None, project_name="local_project", wandb_dir=Path("../wandb")):
+    # Ensure the local directory exists
+    wandb_dir.mkdir(exist_ok=True, parents=True)
+    # Initialize wandb run with local mode
+    override_settings = {"_disable_service": True}  # Ensures local logging only
+    run = wandb.init(
+        project=project_name, 
+        dir=wandb_dir, 
+        config=config, 
+        settings=wandb.Settings(**override_settings)
+    )
+    return run
+    
