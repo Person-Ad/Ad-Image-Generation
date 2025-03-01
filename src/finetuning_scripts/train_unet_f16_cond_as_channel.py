@@ -49,13 +49,13 @@ generator_cpu = torch.Generator(device='cpu').manual_seed(42)
 dtype=torch.bfloat16
 
 batch_size = 4
-accumulation_steps = 2
-num_epochs = 10
-learning_rate = 1e-4
-log_every = 8 # 64
-save_every = 8
+accumulation_steps = 4
+num_epochs = 3
+learning_rate = 1e-5
+log_every =  64
+save_every = 128
 # small_dataset_size = 1024
-small_dataset_size = 32
+small_dataset_size = 1024
 
 def _get_prompt_embeddings():
     """ get inital prompt embeddings to help model """
@@ -92,9 +92,14 @@ def get_mask(image_size):
 model_id = "SG161222/Realistic_Vision_V6.0_B1_noVAE"
 
 scheduler = PNDMScheduler.from_pretrained(model_id, subfolder="scheduler")
-vae = AutoencoderKL.from_pretrained(model_id, subfolder="vae", torch_dtype=dtype).to(device)
-unet = UNet2DConditionModel.from_pretrained(model_id, subfolder="unet", torch_dtype=dtype).to(device)
-net = ZeroConvNet(unet, in_channels=13, out_channels=4).type(dtype).to(device)
+vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse-original", torch_dtype=dtype).to(device)
+
+net = UNet2DConditionModel.from_pretrained(model_id, subfolder="unet",
+                                        in_channels=13,
+                                        low_cpu_mem_usage=False,
+                                        ignore_mismatched_sizes=True,
+                                        torch_dtype=dtype).to(device)
+# net = ZeroConvNet(unet, in_channels=13, out_channels=4).type(dtyp/;9878e).to(device)
 
 
 
@@ -122,7 +127,7 @@ train_dataloader = DataLoader(
 
 inputs = next(iter(train_dataloader))
 # Define the optimizer
-optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
+optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
 lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
 loss_fn = nn.MSELoss()
 
@@ -175,7 +180,7 @@ for epoch in range(num_epochs):
         if (step+1) % log_every == 0:
             scheduler.set_timesteps(50)
             # Prep latents, 
-            latents = torch.randn((batch_size, unet.config.in_channels, 256 // 8, 352 // 8), generator=generator, device=device, dtype=dtype)
+            latents = torch.randn((batch_size, 4, 256 // 8, 352 // 8), generator=generator, device=device, dtype=dtype)
             for i, t in tqdm(enumerate(scheduler.timesteps), total=len(scheduler.timesteps)):
                 latent_model_input = torch.cat([latents, src_mask_latents, mask, st_pose_latents], dim=1)
                 with torch.no_grad():
