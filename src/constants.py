@@ -1,6 +1,8 @@
 from pathlib import Path
-DATA_PATH = Path("./datasets/fashion", absolute=True)
-MODELS_SAVE_PATH = Path("./models", absolute=True)
+
+BASE_DIR = Path(__file__).resolve().parent.parent 
+DATA_PATH = BASE_DIR / "datasets/fashion"
+MODELS_SAVE_PATH = BASE_DIR / "models"
 
 TRAIN_PATH = DATA_PATH / "train_lst_256_png/train_lst_256_png"    
 TRAIN_POSES_PATH = DATA_PATH / "train_lst_256_png/poses"    
