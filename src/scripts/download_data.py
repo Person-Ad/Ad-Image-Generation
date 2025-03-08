@@ -18,6 +18,7 @@ file_ids = {
     "test_data.json": "1AYheq5Xi1DwAJHnTNeLmTYeXNZDuF7lN",
     "train_data.json": "1YSJFvHissnsOdBPPRCZH8ELHAVFdRC44",
     "poses_train_first_5000_zip": "1_6aJxobpD_KCIEDTZDYgfv3NWwpMe6qz",
+    "3430_train_sample_zip": "1g07ph53OHWM4eMhSP-VYu7Yjt77xKh7k"
 }
 
 # Destination folder
@@ -26,7 +27,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 parser_help_msg = """
 list of files to download (or 'all')\n
-Available files: "all_data_png, normalized_pose_txt, train_lst_256_png, test_lst_256_png, train_lst_512_png, test_lst_512_png, test_data.json, train_data.json"
+Available files: "all_data_png, normalized_pose_txt, train_lst_256_png, test_lst_256_png, train_lst_512_png, test_lst_512_png, test_data.json, train_data.json, poses_train_first_5000_zip, 3430_train_sample_zip"
 """
 
 @call_parse
