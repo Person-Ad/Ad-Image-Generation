@@ -33,11 +33,11 @@ def show_images(x):
     return grid_im
 
 
-def make_grid(images, size=256):
+def make_grid(images, width=256, height=256):
     """Given a list of PIL images, stack them together into a line for easy viewing"""
-    output_im = Image.new("RGB", (size * len(images), size))
+    output_im = Image.new("RGB", (width * len(images), height))
     for i, im in enumerate(images):
-        output_im.paste(im.resize((size, size)), (i * size, 0))
+        output_im.paste(im.resize((width, height)), (i * width, 0))
     return output_im
 
 

@@ -15,14 +15,28 @@ from fastcore.script import call_parse, Param
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from constants import TRAIN_PATH, TRAIN_JSON_PATH, TRAIN_POSES_PATH
+from torchvision.transforms import functional as F
+
+class BottomCenterCrop:
+    def __init__(self, size):
+        self.size = size
+
+    def __call__(self, img):
+        w, h = img.size  # Original width and height
+        new_h, new_w = self.size
+        
+        left = (w - new_w) // 2
+        return F.crop(img, 0, left, new_h, new_w)
 
 class FashionDataset(Dataset):
     def __init__(self, 
                  root_dir: Path = TRAIN_PATH, 
                  poses_dir: Path = TRAIN_POSES_PATH,
                  info_json_path: Path = TRAIN_JSON_PATH,
-                 image_size = (256, 352),
-                 small_dataset_size = 1024):
+                 image_resize = (1101, 750),
+                 image_crop = (1096, 744),
+                 small_dataset_size = 1024,
+                 load_poses=True):
         """ Fashion Dataset 
         Args:
             root_dir (Path): Path to the dataset images
@@ -32,16 +46,19 @@ class FashionDataset(Dataset):
         """
         super(FashionDataset, self).__init__()
         self.small_dataset_size = small_dataset_size
-        self.image_size = image_size
+        self.image_resize = image_resize
+        self.image_crop = image_crop
+        self.load_poses = load_poses
         
         assert root_dir.exists(), "No Dataset Exists"
-        assert poses_dir.exists(), "No Poses Exists"
         assert info_json_path.exists(), "No Dataset Info Exists"
+        if load_poses: assert poses_dir.exists(), "No Poses Exists"
         
         self.root_dir = root_dir
         self.poses_dir = poses_dir
         self.transform = transforms.Compose([
-            transforms.Resize(self.image_size),
+            transforms.Resize(image_resize),
+            BottomCenterCrop(image_crop),  # Custom bottom-center crop
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5])
         ])
@@ -59,19 +76,22 @@ class FashionDataset(Dataset):
         src_img = Image.open(self.root_dir / src_path).convert("RGB")  # Convert to 3 channels
         tar_img = Image.open(self.root_dir / tar_path).convert("RGB")  # Convert to 3 channels
         # read src/tar poses
-        src_pose = Image.open(self.poses_dir / src_path).convert("RGB")  # Convert to 3 channels
-        tar_pose = Image.open(self.poses_dir / tar_path).convert("RGB")  # Convert to 3 channels
+        if self.load_poses:
+            src_pose = Image.open(self.poses_dir / src_path).convert("RGB")  # Convert to 3 channels
+            tar_pose = Image.open(self.poses_dir / tar_path).convert("RGB")  # Convert to 3 channels
+            st_pose = self.concatenate_src_tar(src_pose, tar_pose)
         # concatentate inputs
         src_mask = self.concatenate_src_mask(src_img)
-        st_pose = self.concatenate_src_tar(src_pose, tar_pose)
         src_tar = self.concatenate_src_tar(src_img, tar_img)
         
         if self.transform:
             src_mask  = self.transform(src_mask)
-            st_pose   = self.transform(st_pose)
             src_tar   = self.transform(src_tar)
-
-        return {"src_mask": src_mask, "st_pose": st_pose, "src_tar": src_tar} 
+            if self.load_poses: st_pose   = self.transform(st_pose)
+            
+        if self.load_poses:
+            return {"src_mask": src_mask, "st_pose": st_pose, "src_tar": src_tar} 
+        return {"src_mask": src_mask, "src_tar": src_tar} 
     
     def concatenate_src_mask(self, src_img):
         """ concatenate source with mask """
