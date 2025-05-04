@@ -28,7 +28,7 @@ from diffusers import (
 )
 # ----------- local imports ----------- 
 from FashionDataset import FashionDataset
-from ZeroConvNet import ZeroConvNet
+from net.ZeroConvNet import ZeroConvNet
 from constants import MODELS_SAVE_PATH
 from utils import show_images, build_wandb_run
 import wandb
