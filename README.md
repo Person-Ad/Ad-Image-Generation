@@ -38,8 +38,8 @@ This project uses Python 3.10+ and manages dependencies with [Conda](https://doc
 3. **Install dependencies:**
    ```bash
    conda install numpy pillow matplotlib pytorch torchvision -c pytorch
-   pip install transformers diffusers gdown fastcore loguru controlnet_aux
-   pip install basicsr facexlib gfpgan 
+   pip install -U tqdm accelerate transformers diffusers gdown fastcore loguru controlnet_aux open_clip_torch xformers
+   # pip install basicsr facexlib gfpgan -- face restorer (deprected) -- 
    ```
 
 ## 📥 Downloading Data
