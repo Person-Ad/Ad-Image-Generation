@@ -56,79 +56,32 @@ def get_inpainting_cond(pose_proj_model, openpose, s_img, t_pose, dtype = torch.
     
     return cond_pose
 
-# def get_image_embeddings(image_encoder, image_proj_model, s_img, num_samples = 1, dtype = torch.float32):
-#     clip_image_processor = CLIPImageProcessor()
-#     # do basic processing 
-#     clip_s_img = clip_image_processor(images=s_img, return_tensors="pt").pixel_values 
-#     # projected encoded embeddings for both (conditional & uncondational)
-#     with torch.inference_mode():
-#         images_embeds = image_encoder(clip_s_img.to(device, dtype=dtype)).last_hidden_state
-#         image_prompt_embeds = image_proj_model(images_embeds)
-#         uncond_image_prompt_embeds = image_proj_model(torch.zeros_like(images_embeds))
+def get_image_embeddings(image_encoder, image_proj_model, s_img, num_samples = 1, dtype = torch.float32):
+    clip_image_processor = CLIPImageProcessor()
+    # do basic processing 
+    clip_s_img = clip_image_processor(images=s_img, return_tensors="pt").pixel_values 
+    # projected encoded embeddings for both (conditional & uncondational)
+    with torch.inference_mode():
+        images_embeds = image_encoder(clip_s_img.to(device, dtype=dtype)).last_hidden_state
+        image_prompt_embeds = image_proj_model(images_embeds)
+        uncond_image_prompt_embeds = image_proj_model(torch.zeros_like(images_embeds))
     
-#     # repeat inputs to count for unconditional embeddings
-#     bs_embed, seq_len, _ = image_prompt_embeds.shape
-#     image_prompt_embeds = image_prompt_embeds.repeat(1, num_samples, 1).view(bs_embed * num_samples, seq_len, -1)
-#     uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, num_samples, 1).view(bs_embed * num_samples, seq_len, -1)
+    # repeat inputs to count for unconditional embeddings
+    bs_embed, seq_len, _ = image_prompt_embeds.shape
+    image_prompt_embeds = image_prompt_embeds.repeat(1, num_samples, 1).view(bs_embed * num_samples, seq_len, -1)
+    uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, num_samples, 1).view(bs_embed * num_samples, seq_len, -1)
     
-#     return image_prompt_embeds, uncond_image_prompt_embeds
+    return image_prompt_embeds, uncond_image_prompt_embeds
 
 
-
-
-# def inference_one_image(pipe,
-#                         pose_proj_model,
-#                         image_proj_model,
-#                         image_encoder,
-#                         s_img_path = './imgs/img1.png', target_pose_path = './imgs/pose1.png', 
-#                         image_size = (512, 512),
-#                         num_inference_steps = 50,
-#                         guidance_scale = 2.0,
-#                         generator = generator, 
-#                         dtype = torch.float32):
-#     # ======================== Preprocessing ==========================================
-#     # 1. read image
-#     s_img = Image.open(s_img_path).convert("RGB").resize(image_size, Image.BICUBIC)
-#     t_pose = Image.open(target_pose_path).convert("RGB").resize((image_size), Image.BICUBIC)
-#     # 2. get inpainting input
-#     simg_mask_latents = get_inpainting_inputs(pipe, s_img, dtype) # batch_size x 4 x latent_h x latent_w
-#     mask = get_mask(simg_mask_latents.shape[2:], dtype)  # 1 x 1 x latent_h x latent_w
-#     # 3. get conditional pose
-#     cond_pose = get_inpainting_cond(pose_proj_model, s_img, t_pose, dtype=dtype)
-#     # 4. get image embeddings
-#     image_prompt_embeds, uncond_image_prompt_embeds = get_image_embeddings(image_encoder, image_proj_model, s_img, dtype=dtype)
-
-#     print("simg_mask_latents", simg_mask_latents.shape)
-#     print("mask", mask.shape)
-#     print("cond_pose", cond_pose.shape)
-#     print("prompt_embeds", image_prompt_embeds.shape)
-#     print("negative_prompt_embeds", uncond_image_prompt_embeds.shape)
-#     # ======================== Pipeline  ==========================================
-#     return pipe(
-#             simg_mask_latents= simg_mask_latents,
-#             mask = mask,
-#             cond_pose = cond_pose,
-#             prompt_embeds=image_prompt_embeds,
-#             negative_prompt_embeds=uncond_image_prompt_embeds, # ??
-#             height=image_size[1],
-#             width=image_size[0]*2, # for inpainting mask
-#             num_images_per_prompt=1,
-#             guidance_scale=guidance_scale,
-#             generator=generator,
-#             num_inference_steps=num_inference_steps,
-#         )
-    
-    
-    
 
 
 def inference_one_image(pipe,
                         pose_proj_model,
                         image_proj_model,
                         image_encoder,
-                        image_encoder_g,
                         openpose,
-                        s_img_path = './imgs/img1.png', t_img_path = './imgs/tar.png', target_pose_path = './imgs/pose1.png', 
+                        s_img_path = './imgs/img1.png', target_pose_path = './imgs/pose1.png', 
                         image_size = (512, 512),
                         num_inference_steps = 50,
                         guidance_scale = 2.0,
@@ -137,7 +90,6 @@ def inference_one_image(pipe,
     # ======================== Preprocessing ==========================================
     # 1. read image
     s_img = Image.open(s_img_path).convert("RGB").resize(image_size, Image.BICUBIC)
-    t_img = Image.open(t_img_path).convert("RGB").resize(image_size, Image.BICUBIC)
     t_pose = Image.open(target_pose_path).convert("RGB").resize((image_size), Image.BICUBIC)
     # 2. get inpainting input
     simg_mask_latents = get_inpainting_inputs(pipe, s_img, dtype) # batch_size x 4 x latent_h x latent_w
@@ -145,7 +97,7 @@ def inference_one_image(pipe,
     # 3. get conditional pose
     cond_pose = get_inpainting_cond(pose_proj_model, openpose, s_img, t_pose, dtype=dtype)
     # 4. get image embeddings
-    image_prompt_embeds, uncond_image_prompt_embeds = get_image_embeddings(image_encoder, image_encoder_g, image_proj_model, s_img, t_img, dtype=dtype)
+    image_prompt_embeds, uncond_image_prompt_embeds = get_image_embeddings(image_encoder, image_proj_model, s_img, dtype=dtype)
 
     print("simg_mask_latents", simg_mask_latents.shape)
     print("mask", mask.shape)
@@ -166,31 +118,3 @@ def inference_one_image(pipe,
             generator=generator,
             num_inference_steps=num_inference_steps,
         )
-    
-def get_image_embeddings(image_encoder, image_encoder_g, image_proj_model, s_img, t_img, num_samples = 1, dtype = torch.float32):
-    clip_image_processor = CLIPImageProcessor()
-    # do basic processing 
-    clip_s_img = clip_image_processor(images=s_img, return_tensors="pt").pixel_values 
-    clip_t_img = clip_image_processor(images=t_img, return_tensors="pt").pixel_values 
-    # projected encoded embeddings for both (conditional & uncondational)
-    with torch.inference_mode():
-        images_embeds = image_encoder(clip_s_img.to(device, dtype=dtype)).last_hidden_state
-        extra_image_embeddings_g = image_encoder_g(clip_t_img.to(device, dtype=torch.float16)).image_embeds.unsqueeze(1)
-
-        image_prompt_embeds = image_proj_model(images_embeds)
-        
-        uncond_image_prompt_embeds = image_proj_model(torch.zeros_like(images_embeds))
-
-    bs_embed, seq_len, _ = image_prompt_embeds.shape
-
-    image_prompt_embeds = image_prompt_embeds.repeat(1, 1, 1).view(bs_embed * 1, seq_len, -1)
-    uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, 1, 1).view(bs_embed * 1, seq_len, -1)
-        
-    image_prompt_embeds = torch.cat([image_prompt_embeds ,extra_image_embeddings_g], dim=1)
-    
-    uncond_extra_image_embeddings_g = torch.zeros_like(extra_image_embeddings_g, dtype=dtype, device=device)
-    uncond_image_prompt_embeds = torch.cat([uncond_image_prompt_embeds ,uncond_extra_image_embeddings_g], dim=1)
-    
-    return image_prompt_embeds, uncond_image_prompt_embeds
-# if __name__ == "__main__":
-    

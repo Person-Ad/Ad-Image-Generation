@@ -109,7 +109,7 @@ if __name__ == "__main__":
     pipe, unet, pose_proj_model, image_proj_model = load_pipeline_components(device, dtype)
     
     num_samples = 1
-    image_size = (1120, 1120) # W, H
+    image_size = (512, 512) # W, H
     s_img_path = BASE_DIR / 'external/PCDMs/imgs/img1.png'
     target_pose_img = BASE_DIR / 'external/PCDMs/imgs/pose1.png'
     
