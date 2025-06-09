@@ -18,7 +18,8 @@ from scripts.extract_poses import extract_poses
 from pcdms.InpaintingStage import InpaintingProcessor
 
 
-def CelebrityCollateFn(batch):
+def CelebrityCollateFn(batch, image_size=(512, 512)):
+    batch_size = len(batch)
     # dimensions handling
     source_images = torch.stack([sample['source_image'] for sample in batch]).to(memory_format=torch.contiguous_format).float()
     target_image = torch.stack([sample['target_image'] for sample in batch]).to(memory_format=torch.contiguous_format).float()
@@ -26,12 +27,17 @@ def CelebrityCollateFn(batch):
     source_target_poses = torch.stack([sample['source_target_pose'] for sample in batch]).to(memory_format=torch.contiguous_format).float()
     source_target_images = torch.stack([sample['source_target_image'] for sample in batch]).to(memory_format=torch.contiguous_format).float()
 
+    mask1 = torch.ones((batch_size, 1, int(image_size[0] / 8), int(image_size[0] / 8)))
+    mask0 = torch.zeros((batch_size, 1, int(image_size[0] / 8), int(image_size[0] / 8)))
+    mask = torch.cat([mask1, mask0], dim=3)
+    
     return {
         "source_image": source_images, 
         "target_image": target_image, 
         "vae_source_mask_image": vae_source_mask_images,
         "source_target_pose": source_target_poses,
         "source_target_image": source_target_images,
+        "mask": mask
     }
 
 class CelebrityDataset(Dataset):

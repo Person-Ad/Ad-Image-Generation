@@ -143,7 +143,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
         shuffle=True, 
         pin_memory=True, 
         num_workers=config.num_dataloader_workers, 
-        collate_fn=CelebrityCollateFn
+        collate_fn= lambda batch : CelebrityCollateFn(batch, image_size=config.image_resize)
     )
     
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)
