@@ -13,7 +13,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from diffusers.optimization import get_scheduler
 import bitsandbytes as bnb
 from torch.utils.data import Dataset, DataLoader
-from torchvision.transforms import functional as F
+import torch.nn.functional as F
 from tqdm import tqdm
 # Local imports
 import os
