@@ -260,7 +260,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
                     checkpoint_path = output_dir / f"checkpoint-{global_step}"
                     checkpoint_path.mkdir(parents=True, exist_ok=True)
                     # Save LoRA model
-                    unet.module.save_pretrained(checkpoint_path)
+                    unet.save_pretrained(checkpoint_path)
                     # Save optimizer, scheduler, RNG state, etc.
                     accelerator.save_state(checkpoint_path)
                     # Save step/epoch
@@ -274,7 +274,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
         checkpoint_path = output_dir / f"checkpoint-latest"
         checkpoint_path.mkdir(parents=True, exist_ok=True)
         
-        unet.module.save_pretrained(checkpoint_path)
+        unet.save_pretrained(checkpoint_path)
         accelerator.save_state(checkpoint_path)
         with open(checkpoint_path / "trainer_state.json", "w") as f:
             json.dump({"global_step": global_step, "epoch": epoch}, f)
