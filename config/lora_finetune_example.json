@@ -1,0 +1,11 @@
+{
+  "celebrity_name": "mohamed_salah",
+  "root_dir": "datasets/celebrities",
+  "image_resize": [512, 512],
+  "num_images": 35,
+  "train_batch_size": 4,
+  "train_num_epochs": 10,
+  "wandb_key": "9b1874aa53883b3e5ad70626ae587bfdb13a8a02",
+  "wandb_project_name": "lora-finetuning-inpainting",
+  "output_dir": "checkpoint/lora"
+}

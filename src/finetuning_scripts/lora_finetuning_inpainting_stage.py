@@ -1,11 +1,13 @@
+import json
 import math
 import torch
 import wandb
 from pathlib import Path
 from pydantic import BaseModel
 from accelerate import Accelerator
-from peft import LoraConfig, get_peft_model
 from accelerate.logging import get_logger
+from peft import LoraConfig, get_peft_model
+from fastcore.script import call_parse
 
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.optimization import get_scheduler
@@ -13,13 +15,13 @@ import bitsandbytes as bnb
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import functional as F
 from tqdm import tqdm
-
+# Local imports
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from pcdms.InpaintingStage import *
 from CelebrityDataset import CelebrityDataset, CelebrityCollateFn
-from utils import set_seed
+from utils import set_seed, show_images
 
 UNET_TARGET_MODULES = ["to_k", "to_q", "to_v", "to_out.0"]
 logger = get_logger(__name__)
@@ -180,8 +182,16 @@ def lora_finetuning(config: LoraFinetuningConfig):
     logger.info(f"  Gradient Accumulation steps = {config.gradient_accumulation_steps}")
 
     if config.resume_from_checkpoint:
-        raise NotImplementedError("Not Implemented to resume_from_checkpoint yet.")
-    
+        checkpoint_path = Path(config.resume_from_checkpoint)
+        logger.info(f"Resuming from checkpoint: {checkpoint_path}")
+        unet.module.load_pretrained(checkpoint_path)
+        accelerator.load_state(checkpoint_path)
+        # load global step and epoch from trainer state
+        with open(Path(config.resume_from_checkpoint) / "trainer_state.json") as f:
+            state = json.load(f)
+        global_step = state["global_step"]
+        first_epoch = state["epoch"]
+        
     progress_bar = tqdm(range(global_step, max_train_steps), disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
     
@@ -224,25 +234,58 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 accelerator.backward(loss)
                 
                 if accelerator.sync_gradients:
-                    params_to_clip = unet.parameters()
-                    accelerator.clip_grad_norm_(params_to_clip, config.max_grad_norm)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
-                
-                if accelerator.sync_gradients:
-                    progress_bar.update(1)
+                    accelerator.clip_grad_norm_(unet.parameters(), config.max_grad_norm)
+                    optimizer.step()
+                    lr_scheduler.step()
+                    optimizer.zero_grad()
+
                     global_step += 1
+                    logs = {"loss": loss.item(), "lr": lr_scheduler.get_last_lr()[0]}
+                    progress_bar.update(1)
+                    progress_bar.set_postfix(**logs)
+                    accelerator.log(logs, step=global_step)
                 
-                logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
-                progress_bar.set_postfix(**logs)
-                accelerator.log(logs, step=global_step)
-                if accelerator.is_main_process:
-                    if global_step % config.train_save_steps == 0:
-                        accelerator.wait_for_everyone()
-                        unet.save_pretrained(output_dir / f"checkpoint-{global_step}")
-                        logger.info(f"Saved checkpoint to {output_dir / f'checkpoint-{global_step}'}")
+                if accelerator.is_main_process and global_step % config.train_save_steps == 0:
+                    # log images to wandb
+                    outputs = latents / stage.vae.config.scaling_factor
+                    outputs  = stage.vae.decode(outputs).sample
+                    accelerator.log({
+                        "epoch": epoch,
+                        "step": global_step,
+                        "Targets": wandb.Image(show_images(batch["source_target_image"])),
+                        "Samples": wandb.Image(show_images(outputs)),
+                    }, step=global_step)
+                    
+                    accelerator.wait_for_everyone()
+                    checkpoint_path = output_dir / f"checkpoint-{global_step}"
+                    checkpoint_path.mkdir(parents=True, exist_ok=True)
+                    # Save LoRA model
+                    unet.module.save_pretrained(checkpoint_path)
+                    # Save optimizer, scheduler, RNG state, etc.
+                    accelerator.save_state(checkpoint_path)
+                    # Save step/epoch
+                    with open(checkpoint_path / "trainer_state.json", "w") as f:
+                        json.dump({"global_step": global_step, "epoch": epoch}, f)
                         
-if __name__ == "__main__":
-    config = LoraFinetuningConfig()
+                    logger.info(f"Saved full checkpoint to {checkpoint_path}")
+
+    if accelerator.is_main_process:
+        accelerator.wait_for_everyone()
+        checkpoint_path = output_dir / f"checkpoint-latest"
+        checkpoint_path.mkdir(parents=True, exist_ok=True)
+        
+        unet.module.save_pretrained(checkpoint_path)
+        accelerator.save_state(checkpoint_path)
+        with open(checkpoint_path / "trainer_state.json", "w") as f:
+            json.dump({"global_step": global_step, "epoch": epoch}, f)
+        logger.info(f"Saved full checkpoint to {checkpoint_path}")
+        
+@call_parse
+def main(config_path: str = "config/lora_finetune_example.json" # Path to config JSON file
+        ):
+    """Run LoRA fine-tuning using a JSON config."""
+    config_path = BASE_DIR / config_path
+    with open(config_path, "r") as f:
+        cfg_dict = json.load(f)
+    config = LoraFinetuningConfig(**cfg_dict)
     lora_finetuning(config)
