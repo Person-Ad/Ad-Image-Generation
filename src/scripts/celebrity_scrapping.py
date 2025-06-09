@@ -1,6 +1,6 @@
 from fastcore.script import *
 from pydantic import BaseModel, Field, field_validator
-from icrawler.builtin import GoogleImageCrawler
+from icrawler.builtin import GoogleImageCrawler, BaiduImageCrawler
 import cv2
 from pathlib import Path
 from loguru import logger
@@ -22,10 +22,10 @@ class ScraperConfig(BaseModel):
     
 
 def download_images(celebrity_name: str, num_images: int, output_folder: str, downloader_threads: int):
-    save_dir = Path(output_folder) / celebrity_name.replace(" ", "_")
+    save_dir = Path(output_folder)
     save_dir.mkdir(parents=True, exist_ok=True)
     
-    crawler = GoogleImageCrawler(storage={'root_dir': save_dir}, downloader_threads=downloader_threads)
+    crawler = BaiduImageCrawler(storage={'root_dir': save_dir}, downloader_threads=downloader_threads)
     crawler.crawl(keyword=celebrity_name, max_num=num_images)
     
     return save_dir
@@ -71,6 +71,18 @@ def center_crop_person(img_path: Path, out_dir: Path, person_detector: YOLO):
     output_path = out_dir / img_path.name
     cv2.imwrite(str(output_path), cropped)
 
+def scrap_celebrity(cfg: ScraperConfig):
+    # 1. download images
+    logger.info(f"Downloading {cfg.num_images} images of {cfg.celebrity_name}...")
+    download_path = download_images(cfg.celebrity_name, cfg.num_images, cfg.output_dir, cfg.downloader_threads)
+    # 2. detect and crop
+    if cfg.center_crop:
+        logger.info(f"Cropping images to center person...")
+        model = YOLO("yolo11n.pt")
+        for img_file in Path(download_path).glob("*.[jp][pn]*g"):
+            center_crop_person(img_file, download_path, model)
+    
+    logger.success(f"Images saved in: {download_path}")
 
 
 @call_parse
@@ -81,16 +93,6 @@ def main(
     center_crop: bool = False,                # Detect person in photo and center crop on that person | default false
     downloader_threads: int = 4,              # Number of threads used to download images | default 4
 ):
-    # 1. validate configurations
     cfg = ScraperConfig(celebrity_name=celebrity_name, num_images=num_images, output_dir=output_dir, downloader_threads=downloader_threads, center_crop=center_crop)
-    # 2. download images
-    logger.info(f"Downloading {cfg.num_images} images of {cfg.celebrity_name}...")
-    download_path = download_images(cfg.celebrity_name, cfg.num_images, cfg.output_dir, cfg.downloader_threads)
-    # 3. detect and crop
-    if cfg.center_crop:
-        logger.info(f"Cropping images to center person...")
-        model = YOLO("yolo11n.pt")
-        for img_file in Path(download_path).glob("*.[jp][pn]*g"):
-            center_crop_person(img_file, download_path, model)
     
-    logger.success(f"Images saved in: {download_path}")
+    scrap_celebrity(cfg)

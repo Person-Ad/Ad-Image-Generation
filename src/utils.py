@@ -1,3 +1,5 @@
+import torch
+import random
 from pathlib import Path
 import gdown
 import zipfile
@@ -9,6 +11,11 @@ from loguru import logger
 
 import wandb
 
+def set_seed(seed):
+    np.random.seed(seed)
+    torch.random.manual_seed(seed)
+    random.seed(seed)
+    
 def download_gfile(file_id, destination: Path):
     if destination.exists():
         logger.warning(f"File already exists: {destination}")

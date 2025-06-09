@@ -39,6 +39,8 @@ This project uses Python 3.10+ and manages dependencies with [Conda](https://doc
    ```bash
    conda install numpy pillow matplotlib pytorch torchvision -c pytorch
    pip install -U tqdm accelerate transformers diffusers gdown fastcore loguru controlnet_aux open_clip_torch xformers
+   pip install icrawler
+   pip install peft accelerate bitsandbytes 
    # pip install basicsr facexlib gfpgan -- face restorer (deprected) -- 
    ```
 
