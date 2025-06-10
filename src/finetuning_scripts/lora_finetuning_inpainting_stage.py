@@ -5,7 +5,7 @@ import wandb
 import logging
 import diffusers
 import transformers
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from pathlib import Path
 from pydantic import BaseModel
 import torch.nn.functional as F
@@ -354,7 +354,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 output_images = []
                 with torch.no_grad():
                     for idx in tqdm(range(len(val_dataset)), desc="Validation"):
-                        output = stage([InpaintingSampleInput(val_dataset[idx])])
+                        output = stage([InpaintingSampleInput.model_validate(val_dataset[idx])])
                         output_images.append(output)
                 output_images = torch.stack(output_images, dim=0)
                 output_images = show_images(output_images)

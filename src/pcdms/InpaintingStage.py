@@ -41,10 +41,10 @@ class InpaintingSampleInput(BaseModel):
     """
     Input data for the Inpainting Stage.
     """
-    s_img_path: str  # Path to the source image
-    t_img_path: str  # Path to the target image
-    s_pose_path: str | None = None  # Optional path to the source pose image
-    t_pose_path: str | None = None  # Optional path to the target pose image
+    s_img_path: str | Path  # Path to the source image
+    t_img_path: str  | Path # Path to the target image
+    s_pose_path: str | Path | None = None  # Optional path to the source pose image
+    t_pose_path: str | Path | None = None  # Optional path to the target pose image
     image_size: tuple = (512, 512)  # Size of the images, default is (512, 512)
     
 class InpaintingInferenceConfig(BaseModel):
@@ -107,8 +107,8 @@ class InpaintingProcessor:
             "source_target_image": trans_st_img,
         }
 
-    def process_batch(self, openpose, inputs: list[InpaintingSampleInput]):
-        batch = [self.process_input(openpose, **sample.model_dump()) for sample in inputs]
+    def process_batch(self, inputs: list[InpaintingSampleInput]):
+        batch = [self.process_input(**sample.model_dump()) for sample in inputs]
         batch_size = len(batch)
         # mask
         mask1 = torch.ones((batch_size, 1, int(inputs[0].image_size[0] / 8), int(inputs[0].image_size[0] / 8)))
