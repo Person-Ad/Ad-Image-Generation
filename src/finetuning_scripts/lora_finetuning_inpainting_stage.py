@@ -53,7 +53,7 @@ class LoraFinetuningConfig(BaseModel):
     gradient_checkpointing: bool = True
     max_train_steps: int = 2000
     
-    learning_rate: float = 1e-4
+    learning_rate: float = 5e-6
     scale_lr: bool = True
     lr_scheduler: str = "constant"
     lr_warmup_steps: int = 500
