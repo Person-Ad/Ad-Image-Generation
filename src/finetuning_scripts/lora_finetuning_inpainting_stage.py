@@ -217,7 +217,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)
     if config.max_train_steps is None:
-        config.max_train_steps = config.num_train_epochs * num_update_steps_per_epoch
+        config.max_train_steps = config.train_num_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
         
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)
@@ -248,9 +248,9 @@ def lora_finetuning(config: LoraFinetuningConfig):
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)
     if overrode_max_train_steps:
-        config.max_train_steps = config.num_train_epochs * num_update_steps_per_epoch
+        config.max_train_steps = config.train_num_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
-    config.num_train_epochs = math.ceil(config.max_train_steps / num_update_steps_per_epoch)
+    config.train_num_epochs = math.ceil(config.max_train_steps / num_update_steps_per_epoch)
 
     if accelerator.is_main_process:
         accelerator.init_trackers(
