@@ -15,6 +15,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from constants import BASE_DIR
 from scripts.celebrity_scrapping  import scrap_celebrity, ScraperConfig
 from scripts.extract_poses import extract_poses
+from scripts.resize_folder_images import resize_folder_images
 from pcdms.InpaintingStage import InpaintingProcessor
 
 
@@ -67,6 +68,7 @@ class CelebrityDataset(Dataset):
         self.directory = BASE_DIR / root_dir / celebrity_name
         self.images_directory = self.directory / "cropped"
         self.poses_directory = self.directory / "poses"
+        self.cleaned_images_directory = self.directory / "cleaned"
         
         if not self.images_directory.exists():
             logger.info(f"Scrapping celebrity {celebrity_name} as Didn't Find {self.images_directory}")
@@ -75,13 +77,17 @@ class CelebrityDataset(Dataset):
                                          output_dir=str(self.images_directory),
                                          center_crop=True)
             scrap_celebrity(scrap_config)
-        
+            
+        if not self.cleaned_images_directory.exists():
+            logger.info(f"Cleaning images of celebrity {celebrity_name} as Didn't Find {self.cleaned_images_directory}")
+            resize_folder_images(self.images_directory, self.cleaned_images_directory, image_resize)
+                
         if not self.poses_directory.exists():
             logger.info(f"Extracting poses of celebrity {celebrity_name} as Didn't Find {self.poses_directory}")
-            extract_poses(self.images_directory, self.poses_directory, image_resize)
+            extract_poses(self.cleaned_images_directory, self.poses_directory, image_resize)
         
         logger.info(f"Generating pairs of images")
-        image_names = list(self.images_directory.glob("*.[jp][pn]*g"))
+        image_names = list(self.cleaned_images_directory.glob("*.[jp][pn]*g"))
         image_names = [s.name for s in image_names]
         
         self.src_tar_pairs = list(permutations(image_names, 2))
@@ -94,8 +100,8 @@ class CelebrityDataset(Dataset):
     
     def __getitem__(self, idx):
         src_tar_pair = self.src_tar_pairs[idx]
-        s_img_path = self.images_directory / src_tar_pair[0]
-        t_img_path = self.images_directory / src_tar_pair[1]
+        s_img_path = self.cleaned_images_directory / src_tar_pair[0]
+        t_img_path = self.cleaned_images_directory / src_tar_pair[1]
         s_pose_path = self.poses_directory / src_tar_pair[0]
         t_pose_path = self.poses_directory / src_tar_pair[1]
         
@@ -108,8 +114,8 @@ class CelebrityDataset(Dataset):
                                             self.image_resize)
         
 if __name__ == "__main__":
-    dataset = CelebrityDataset()
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, pin_memory=True, collate_fn=CelebrityCollateFn)
+    dataset = CelebrityDataset(celebrity_name="mo_salah")
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, pin_memory=True, collate_fn=lambda x: CelebrityCollateFn(x, (512, 512)))
     
     for batch in dataloader:
         print(batch['source_image'].shape, batch['source_target_pose'].shape, batch['source_target_image'].shape)
