@@ -2,26 +2,27 @@ import json
 import math
 import torch
 import wandb
+import logging
+import diffusers
+import transformers
+from tqdm import tqdm
 from pathlib import Path
 from pydantic import BaseModel
+import torch.nn.functional as F
 from accelerate import Accelerator
+from fastcore.script import call_parse
 from accelerate.logging import get_logger
 from peft import LoraConfig, get_peft_model
-from fastcore.script import call_parse
-
-from diffusers.utils.import_utils import is_xformers_available
-from diffusers.optimization import get_scheduler
-import bitsandbytes as bnb
 from torch.utils.data import Dataset, DataLoader
-import torch.nn.functional as F
-from tqdm import tqdm
+from diffusers.optimization import get_scheduler
+from diffusers.utils.import_utils import is_xformers_available
+
 # Local imports
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from pcdms.InpaintingStage import *
-from CelebrityDataset import CelebrityDataset, CelebrityCollateFn
 from utils import set_seed, show_images
+from constants import BASE_DIR
 
 UNET_TARGET_MODULES = ["to_k", "to_q", "to_v", "to_out.0"]
 logger = get_logger(__name__)
@@ -35,11 +36,11 @@ class LoraFinetuningConfig(BaseModel):
     seed: int = 42
     max_samples: int = 6000
     
-    num_dataloader_workers: int = 4
+    num_dataloader_workers: int = 2
     
     # Configuration for LoRA Finetuning
-    lora_rank: int = 8
-    lora_alpha: int = 32
+    lora_rank: int = 4
+    lora_alpha: int = 16
     lora_dropout: float = 0.1
     lora_bias: str = "none"
     
@@ -50,8 +51,9 @@ class LoraFinetuningConfig(BaseModel):
     train_save_steps: int = 500
     gradient_accumulation_steps: int = 2
     gradient_checkpointing: bool = True
+    max_train_steps: int = 2000
     
-    learning_rate: float = 5e-6
+    learning_rate: float = 1e-4
     scale_lr: bool = True
     lr_scheduler: str = "constant"
     lr_warmup_steps: int = 500
@@ -71,30 +73,76 @@ class LoraFinetuningConfig(BaseModel):
     wandb_key: str = None
     wandb_project_name: str = "lora-finetuning-inpainting"
     
+    noise_offset: float = 0.1
+    set_grads_to_none: bool = True
+    
+    validate_every_n_steps: int = 500
+    
     device: str = 'cuda'
 
+def checkpoint_model(model, output_dir, global_step, epoch, accelerator):
+    """
+    Save the model checkpoint.
+    
+    Args:
+        model: The model to save.
+        output_dir: Directory to save the checkpoint.
+        global_step: Current training step.
+        epoch: Current epoch.
+        accelerator: Accelerator instance for distributed training.
+    """
+    checkpoint_path = output_dir / f"checkpoint-{global_step}"
+    checkpoint_path.mkdir(parents=True, exist_ok=True)
+    
+    # Save LoRA model
+    model.save_pretrained(checkpoint_path)
+    
+    # Save optimizer, scheduler, RNG state, etc.
+    accelerator.save_state(checkpoint_path)
+    
+    # Save step/epoch
+    with open(checkpoint_path / "trainer_state.json", "w") as f:
+        json.dump({"global_step": global_step, "epoch": epoch}, f)
+    
+    logger.info(f"Saved full checkpoint to {checkpoint_path}")
+   
+   
 def lora_finetuning(config: LoraFinetuningConfig):
+    import bitsandbytes as bnb
+    from pcdms.InpaintingStage import InpaintingStage, InpaintingConfig, InpaintingSampleInput
+    from CelebrityDataset import CelebrityDataset, CelebrityCollateFn
+    
+    
     output_dir = Path(config.output_dir)
     logging_dir = output_dir / "wandb"
-    
+            
     accelerator = Accelerator(
         gradient_accumulation_steps=config.gradient_accumulation_steps,
         mixed_precision=config.mixed_precision,
         project_dir=logging_dir,
         log_with="wandb" if config.wandb_key else None,
     )
+     # Make one log on every process with the configuration for debugging.
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO, )
+    logger.info(accelerator.state, main_process_only=False)
+    if accelerator.is_local_main_process:
+        transformers.utils.logging.set_verbosity_warning()
+        diffusers.utils.logging.set_verbosity_info()
+    else:
+        transformers.utils.logging.set_verbosity_error()
+        diffusers.utils.logging.set_verbosity_error()
     
     if accelerator.is_local_main_process:
         output_dir.mkdir(parents=True, exist_ok=True)
         logging_dir.mkdir(parents=True, exist_ok=True)
-        
-    if config.wandb_key:
-        wandb.login(key=config.wandb_key)
-        wandb.init(project=config.wandb_project_name)
-    
+    # Set the seed for reproducibility
+    set_seed(config.seed)
+    # log accelerator state
     logger.info(accelerator.state)
     
-    set_seed(config.seed)
     
     stage_config = InpaintingConfig(precision=config.mixed_precision)
     stage = InpaintingStage(stage_config)
@@ -107,22 +155,25 @@ def lora_finetuning(config: LoraFinetuningConfig):
         target_modules=UNET_TARGET_MODULES,
     )
     
-    unet = get_peft_model(stage.sd_model.unet, lora_config)
-    unet.print_trainable_parameters()
+    sd_model = get_peft_model(stage.sd_model, lora_config)
+    sd_model.print_trainable_parameters()
     
     if is_xformers_available():
-        unet.enable_xformers_memory_efficient_attention()
+        sd_model.enable_xformers_memory_efficient_attention()
     if config.gradient_checkpointing:
-        unet.enable_gradient_checkpointing()
+        sd_model.enable_gradient_checkpointing()
     if config.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
     if config.scale_lr:
         config.learning_rate = (
-            config.learning_rate * config.gradient_accumulation_steps * config.train_batch_size * accelerator.num_processes
+                config.learning_rate 
+                * config.gradient_accumulation_steps 
+                * config.train_batch_size 
+                * accelerator.num_processes
         )
 
     optimizer = bnb.optim.AdamW8bit(
-        params=unet.parameters(),
+        params=sd_model.parameters(),
         lr=config.learning_rate,
         betas=(config.adam_beta1, config.adam_beta2),
         weight_decay=config.adam_weight_decay,
@@ -135,41 +186,76 @@ def lora_finetuning(config: LoraFinetuningConfig):
         config.image_resize, 
         config.num_images, 
         config.seed, 
-        config.max_samples
+        config.max_samples,
+        split_ratio=0.999
     )
+    val_dataset = CelebrityDataset(
+        config.root_dir, 
+        config.celebrity_name, 
+        config.image_resize, 
+        config.num_images, 
+        config.seed, 
+        config.max_samples,
+        split="val",
+        split_ratio=0.999
+    )
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+        train_dataset, num_replicas=accelerator.num_processes, rank=accelerator.process_index, shuffle=True)
+
     train_dataloader = DataLoader(
         train_dataset, 
+        sampler=train_sampler,
         batch_size=config.train_batch_size, 
-        shuffle=True, 
         pin_memory=True, 
         num_workers=config.num_dataloader_workers, 
         collate_fn= lambda batch : CelebrityCollateFn(batch, image_size=config.image_resize)
     )
     
+    # Scheduler and math around the number of training steps.
+    overrode_max_train_steps = False
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)
+    if config.max_train_steps is None:
+        config.max_train_steps = config.num_train_epochs * num_update_steps_per_epoch
+        overrode_max_train_steps = True
+        
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)
     max_train_steps = config.train_num_epochs * num_update_steps_per_epoch
     
     lr_scheduler = get_scheduler(
         config.lr_scheduler,
         optimizer=optimizer,
-        num_warmup_steps=config.lr_warmup_steps * config.gradient_accumulation_steps,
-        num_training_steps=max_train_steps * config.gradient_accumulation_steps,
+        num_warmup_steps=config.lr_warmup_steps * accelerator.num_processes,
+        num_training_steps=max_train_steps * accelerator.num_processes,
         num_cycles=config.lr_num_cycles,
         power=config.lr_power,
     )
     
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
+    # Prepare everything with our `accelerator`
+    sd_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        sd_model, optimizer, train_dataloader, lr_scheduler
     )
     
+    # For mixed precision training we cast the text_encoder and vae weights to half-precision
+    # as these models are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
         
-    total_batch_size = config.train_batch_size * accelerator.num_processes * config.gradient_accumulation_steps
-    
+    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)
+    if overrode_max_train_steps:
+        config.max_train_steps = config.num_train_epochs * num_update_steps_per_epoch
+    # Afterwards we recalculate our number of training epochs
+    config.num_train_epochs = math.ceil(config.max_train_steps / num_update_steps_per_epoch)
+
+    if accelerator.is_main_process:
+        accelerator.init_trackers(
+            project_name=config.wandb_project_name, config=config.model_dump(),
+        )
+    total_batch_size = config.train_batch_size * accelerator.num_processes * config.gradient_accumulation_steps 
+
     global_step = 0
     first_epoch = 0
     
@@ -184,7 +270,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
     if config.resume_from_checkpoint:
         checkpoint_path = Path(config.resume_from_checkpoint)
         logger.info(f"Resuming from checkpoint: {checkpoint_path}")
-        unet.module.load_pretrained(checkpoint_path)
+        sd_model.load_pretrained(checkpoint_path)
         accelerator.load_state(checkpoint_path)
         # load global step and epoch from trainer state
         with open(Path(config.resume_from_checkpoint) / "trainer_state.json") as f:
@@ -195,19 +281,25 @@ def lora_finetuning(config: LoraFinetuningConfig):
     progress_bar = tqdm(range(global_step, max_train_steps), disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
     
+    sd_model.train()
     for epoch in range(first_epoch, config.train_num_epochs):
-        unet.train()
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet):
+            with accelerator.accumulate(sd_model):
                 for key in ["mask", "source_image", "target_image", "source_target_pose", "source_target_image", "vae_source_mask_image"]:
                     batch[key] = batch[key].to(accelerator.device, dtype=weight_dtype)
-                # Convert images to latent space
-                latents = stage.vae.encode(batch["source_target_image"]).latent_dist.sample() * stage.vae.config.scaling_factor
-                masked_latents = stage.vae.encode(batch["vae_source_mask_image"]).latent_dist.sample() * stage.vae.config.scaling_factor
-                cond_image_feature_p = stage.image_encoder_p(batch["source_image"]).last_hidden_state
-                cond_image_feature_g = stage.image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
+                with torch.no_grad():
+                    # Convert images to latent space
+                    latents = stage.vae.encode(batch["source_target_image"]).latent_dist.sample() * stage.vae.config.scaling_factor
+                    masked_latents = stage.vae.encode(batch["vae_source_mask_image"]).latent_dist.sample() * stage.vae.config.scaling_factor
+                    cond_image_feature_p = stage.image_encoder_p(batch["source_image"]).last_hidden_state
+                    cond_image_feature_g = stage.image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
                 
                 noise = torch.randn_like(latents)
+                if config.noise_offset:
+                    # https://www.crosslabs.org//blog/diffusion-with-offset-noise
+                    noise += config.noise_offset * torch.randn(
+                        (latents.shape[0], latents.shape[1], 1, 1), device=latents.device
+                    )
                 bsz = latents.shape[0]
                 timesteps = torch.randint(
                     0, stage.noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device
@@ -234,52 +326,46 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 accelerator.backward(loss)
                 
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(unet.parameters(), config.max_grad_norm)
-                    optimizer.step()
-                    lr_scheduler.step()
-                    optimizer.zero_grad()
-
-                    global_step += 1
-                    logs = {"loss": loss.item(), "lr": lr_scheduler.get_last_lr()[0]}
-                    progress_bar.update(1)
-                    progress_bar.set_postfix(**logs)
-                    accelerator.log(logs, step=global_step)
+                    accelerator.clip_grad_norm_(sd_model.parameters(), config.max_grad_norm)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad(set_to_none=config.set_grads_to_none)
                 
-                if accelerator.is_main_process and global_step % config.train_save_steps == 0:
-                    # log images to wandb
-                    outputs = latents / stage.vae.config.scaling_factor
-                    outputs  = stage.vae.decode(outputs).sample
-                    accelerator.log({
-                        "epoch": epoch,
-                        "step": global_step,
-                        "Targets": wandb.Image(show_images(batch["source_target_image"])),
-                        "Samples": wandb.Image(show_images(outputs)),
-                    }, step=global_step)
-                    
-                    accelerator.wait_for_everyone()
-                    checkpoint_path = output_dir / f"checkpoint-{global_step}"
-                    checkpoint_path.mkdir(parents=True, exist_ok=True)
-                    # Save LoRA model
-                    unet.save_pretrained(checkpoint_path)
-                    # Save optimizer, scheduler, RNG state, etc.
-                    accelerator.save_state(checkpoint_path)
-                    # Save step/epoch
-                    with open(checkpoint_path / "trainer_state.json", "w") as f:
-                        json.dump({"global_step": global_step, "epoch": epoch}, f)
-                        
-                    logger.info(f"Saved full checkpoint to {checkpoint_path}")
+            # Checks if the accelerator has performed an optimization step behind the scenes
+            if accelerator.sync_gradients:
+                progress_bar.update(1)
+                global_step += 1
+            
+                if global_step % config.train_save_steps == 0:
+                    checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator)
+
+            logs = {"loss": loss.item(), "lr": lr_scheduler.get_last_lr()[0]}
+            progress_bar.set_postfix(**logs)
+            accelerator.log(logs, step=global_step)
+            if global_step >= config.max_train_steps:
+                break
+            
+            if global_step % config.validate_every_n_steps == 0:
+                logger.info(f"Running validation at step {global_step}")
+                sd_model.eval()
+                stage.sd_model = sd_model
+                output_images = []
+                with torch.no_grad():
+                    for idx in tqdm(range(len(val_dataset)), desc="Validation"):
+                        output = stage([InpaintingSampleInput(val_dataset[idx])])
+                        output_images.append(output)
+                output_images = torch.stack(output_images, dim=0)
+                output_images = show_images(output_images)
+                accelerator.log({
+                    "outputs": wandb.Image(output_images)
+                }, step=global_step)
 
     if accelerator.is_main_process:
-        accelerator.wait_for_everyone()
-        checkpoint_path = output_dir / f"checkpoint-latest"
-        checkpoint_path.mkdir(parents=True, exist_ok=True)
-        
-        unet.save_pretrained(checkpoint_path)
-        accelerator.save_state(checkpoint_path)
-        with open(checkpoint_path / "trainer_state.json", "w") as f:
-            json.dump({"global_step": global_step, "epoch": epoch}, f)
-        logger.info(f"Saved full checkpoint to {checkpoint_path}")
-        
+        checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator)
+
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
+    
 @call_parse
 def main(config_path: str = "config/lora_finetune_example.json" # Path to config JSON file
         ):
@@ -287,5 +373,11 @@ def main(config_path: str = "config/lora_finetune_example.json" # Path to config
     config_path = BASE_DIR / config_path
     with open(config_path, "r") as f:
         cfg_dict = json.load(f)
+        
     config = LoraFinetuningConfig(**cfg_dict)
+    if config.wandb_key:
+        wandb.login(key=config.wandb_key)
+        wandb.init(project=config.wandb_project_name)
+        
     lora_finetuning(config)
+    

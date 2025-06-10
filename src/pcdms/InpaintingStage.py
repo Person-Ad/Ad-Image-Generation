@@ -56,17 +56,20 @@ class InpaintingProcessor:
     """
     Processor for handling image inputs and transformations for the Inpainting Stage.
     """
-    def __init__(self) -> None:
+    def __init__(self, device='cuda') -> None:
         self.clip_image_processor = CLIPImageProcessor()
         self.img_transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5]),
         ])
+        self.device = torch.device(device)
+        
 
-    def inference_pose(self, openpose, img):
+    def inference_pose(self, img):
+        openpose = OpenposeDetector.from_pretrained("lllyasviel/ControlNet").to(self.device)
         return openpose(img, detect_resolution=img.size[0],  include_hand=True).resize(img.size, Image.BICUBIC)
         
-    def process_input(self, openpose, s_img_path, t_img_path, s_pose_path = None, t_pose_path = None, image_size=(512, 512)):
+    def process_input(self, s_img_path, t_img_path, s_pose_path = None, t_pose_path = None, image_size=(512, 512)):
         s_img = Image.open(s_img_path).convert("RGB").resize(image_size, Image.BICUBIC)
         t_img = Image.open(t_img_path).convert("RGB").resize(image_size, Image.BICUBIC)
 
@@ -83,8 +86,8 @@ class InpaintingProcessor:
         st_img.paste(s_img, (0, 0))
         st_img.paste(t_img, (image_size[0], 0))
 
-        s_pose = self.inference_pose(openpose, s_img) if not s_pose_path else Image.open(s_pose_path).convert("RGB").resize(image_size, Image.BICUBIC)
-        t_pose = self.inference_pose(openpose, t_img) if not t_pose_path else Image.open(t_pose_path).convert("RGB").resize(image_size, Image.BICUBIC)
+        s_pose = self.inference_pose(s_img) if not s_pose_path else Image.open(s_pose_path).convert("RGB").resize(image_size, Image.BICUBIC)
+        t_pose = self.inference_pose(t_img) if not t_pose_path else Image.open(t_pose_path).convert("RGB").resize(image_size, Image.BICUBIC)
 
         st_pose = Image.new("RGB", (image_size[0] * 2, image_size[1]))
         st_pose.paste(s_pose, (0, 0))
@@ -135,7 +138,7 @@ class InpaintingStage():
         self.device = torch.device("cuda" if torch.cuda.is_available() and config.device == "cuda" else "cpu")
         self.weight_dtype = torch.float16 if config.precision == "fp16" else torch.float32
 
-        self.processor = InpaintingProcessor()
+        self.processor = InpaintingProcessor(self.device)
 
         self.checkpoint_path: Path = BASE_DIR / config.checkpoint_path
         if not self.checkpoint_path.exists():
@@ -146,12 +149,8 @@ class InpaintingStage():
         
     def load_pipeline(self):
         logger.info("start loading pipeline ...")
-        progress_bar = tqdm(total=6, desc="Loading Inpainting Stage Pipeline")
+        progress_bar = tqdm(total=5, desc="Loading Inpainting Stage Pipeline")
 
-        progress_bar.set_description("Loading Openpose Detector")
-        self.openpose = OpenposeDetector.from_pretrained("lllyasviel/ControlNet").to(self.device)
-        
-        progress_bar.update(1)
         progress_bar.set_description("Loading UNet Model")
         self.unet = Stage2_InapintUNet2DConditionModel.from_pretrained(self.config.pretrained_model_path, subfolder="unet",
                                                    in_channels=9, class_embed_type="projection" ,projection_class_embeddings_input_dim=1024,
@@ -204,7 +203,7 @@ class InpaintingStage():
             t_pose_path (str, optional): Path to the target pose image. Defaults to None.
             image_size (tuple, optional): Size of the images. Defaults to (512, 512).
         """
-        inputs = self.processor.process_batch(self.openpose, inputs)
+        inputs = self.processor.process_batch(inputs)
 
         for key in ["mask", "source_image", "target_image", "source_target_pose", "source_target_image", "vae_source_mask_image"]:
             inputs[key] = inputs[key].to(self.device, dtype=self.weight_dtype)

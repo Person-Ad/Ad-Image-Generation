@@ -48,7 +48,9 @@ class CelebrityDataset(Dataset):
                  image_resize=(512, 512),
                  num_images=35,
                  seed = 42,
-                 max_samples = 6000):
+                 max_samples = 6000,
+                 split: str = "train",
+                 split_ratio: float = 0.8):
         """ Celebrity Dataset 
         Args:
             root_dir (str): Path to the dataset celebrities
@@ -57,7 +59,9 @@ class CelebrityDataset(Dataset):
             num_images (int): Number of images to download if not exist 
             seed (int): Seed used to generate permutations of pairs of images
             max_samples (int| None): Max Number of training samples
-            
+            split (str | None): Dataset split (train, val, test). If None, all samples are returned.
+            split_ratio (float): Ratio of training samples to total samples if train split is selected.
+            If split is "val", the remaining samples are used for validation.
         """
         super(CelebrityDataset, self).__init__()
         random.seed(seed)
@@ -94,6 +98,14 @@ class CelebrityDataset(Dataset):
         random.shuffle(self.src_tar_pairs)
         if max_samples is not None:
             self.src_tar_pairs = self.src_tar_pairs[:max_samples]
+        
+        self.split = split
+        if split == "train":
+            split_index = int(len(self.src_tar_pairs) * split_ratio)
+            self.src_tar_pairs = self.src_tar_pairs[:split_index]
+        elif split == "val":
+            split_index = int(len(self.src_tar_pairs) * split_ratio)
+            self.src_tar_pairs = self.src_tar_pairs[split_index:]
 
     def __len__(self):
         return len(self.src_tar_pairs)
@@ -105,9 +117,16 @@ class CelebrityDataset(Dataset):
         s_pose_path = self.poses_directory / src_tar_pair[0]
         t_pose_path = self.poses_directory / src_tar_pair[1]
         
-        
-        return self.processor.process_input(None, 
-                                            s_img_path, 
+        if self.split == "val":
+            return {
+                "s_img_path": s_img_path,
+                "t_img_path": t_img_path,
+                "s_pose_path": s_pose_path,
+                "t_pose_path": t_pose_path,
+                "image_size": self.image_resize
+            }
+            
+        return self.processor.process_input(s_img_path, 
                                             t_img_path, 
                                             s_pose_path, 
                                             t_pose_path,
