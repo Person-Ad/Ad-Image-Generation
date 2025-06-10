@@ -16,6 +16,7 @@ from constants import BASE_DIR
 from scripts.celebrity_scrapping  import scrap_celebrity, ScraperConfig
 from scripts.extract_poses import extract_poses
 from scripts.resize_folder_images import resize_folder_images
+from scripts.adv_remove_bg_folder_images import remove_bg_folder_images_advanced
 from pcdms.InpaintingStage import InpaintingProcessor
 
 
@@ -85,6 +86,15 @@ class CelebrityDataset(Dataset):
         if not self.cleaned_images_directory.exists():
             logger.info(f"Cleaning images of celebrity {celebrity_name} as Didn't Find {self.cleaned_images_directory}")
             resize_folder_images(self.images_directory, self.cleaned_images_directory, image_resize)
+            remove_bg_folder_images_advanced(
+                input_dir=self.cleaned_images_directory,
+                output_dir=self.cleaned_images_directory,
+                model_name='u2net_human_seg',
+                alpha_matting=True,  # Better edge quality
+                save_mask=False,      # Save masks separately
+                refine_edges=True    # Softer edges
+            )
+    
                 
         if not self.poses_directory.exists():
             logger.info(f"Extracting poses of celebrity {celebrity_name} as Didn't Find {self.poses_directory}")
@@ -133,8 +143,8 @@ class CelebrityDataset(Dataset):
                                             self.image_resize)
         
 if __name__ == "__main__":
-    dataset = CelebrityDataset(celebrity_name="mo_salah")
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, pin_memory=True, collate_fn=lambda x: CelebrityCollateFn(x, (512, 512)))
+    dataset = CelebrityDataset(celebrity_name="mo_salah", image_resize=(1024, 1024))
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, pin_memory=True, collate_fn=lambda x: CelebrityCollateFn(x, (1024, 1024)))
     
     for batch in dataloader:
         print(batch['source_image'].shape, batch['source_target_pose'].shape, batch['source_target_image'].shape)
