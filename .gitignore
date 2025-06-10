@@ -175,3 +175,5 @@ assets
 *.pth
 *.pyc
 *.pt
+*.onnx
+checkpoint/
