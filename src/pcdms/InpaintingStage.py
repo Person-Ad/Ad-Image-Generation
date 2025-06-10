@@ -254,6 +254,8 @@ class InpaintingStage():
                 latents = self.noise_scheduler.step(noise_pred, t, latents).prev_sample
 
         outputs = latents / self.vae.config.scaling_factor
+        # Ensure the output tensor matches the VAE's weight dtype
+        outputs = outputs.to(dtype=self.weight_dtype)
         with torch.no_grad():
             outputs  = self.vae.decode(outputs).sample
         return outputs

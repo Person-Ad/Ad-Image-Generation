@@ -356,10 +356,8 @@ def lora_finetuning(config: LoraFinetuningConfig):
                     for idx in tqdm(range(len(val_dataset)), desc="Validation"):
                         output = stage([InpaintingSampleInput.model_validate(val_dataset[idx])])
                         output_images.append(output)
-                output_images = torch.stack(output_images, dim=0)
-                output_images = show_images(output_images)
                 accelerator.log({
-                    "outputs": wandb.Image(output_images)
+                    "outputs": wandb.Image(show_images(torch.stack(output_images, dim=1).squeeze(0)))
                 }, step=global_step)
 
     if accelerator.is_main_process:
