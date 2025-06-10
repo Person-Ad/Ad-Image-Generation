@@ -155,8 +155,9 @@ def lora_finetuning(config: LoraFinetuningConfig):
         target_modules=UNET_TARGET_MODULES,
     )
     
+    sd_model = stage.sd_model
     if is_xformers_available():
-        stage.sd_model.unet.enable_xformers_memory_efficient_attention()
+        sd_model.unet.enable_xformers_memory_efficient_attention()
     if config.gradient_checkpointing:
         sd_model.enable_gradient_checkpointing()
     if config.allow_tf32:
