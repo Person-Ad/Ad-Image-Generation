@@ -155,11 +155,12 @@ def lora_finetuning(config: LoraFinetuningConfig):
         target_modules=UNET_TARGET_MODULES,
     )
     
+    if is_xformers_available():
+        stage.sd_model.unet.enable_xformers_memory_efficient_attention()
+        
     sd_model = get_peft_model(stage.sd_model, lora_config)
     sd_model.print_trainable_parameters()
     
-    if is_xformers_available():
-        sd_model.enable_xformers_memory_efficient_attention()
     if config.gradient_checkpointing:
         sd_model.enable_gradient_checkpointing()
     if config.allow_tf32:
