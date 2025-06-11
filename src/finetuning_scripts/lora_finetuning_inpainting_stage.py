@@ -286,7 +286,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
     )
     output_embeddings_p = {}
     output_embeddings_g = {}
-    if config.preload_embeddings:
+    if accelerator.is_main_process and config.preload_embeddings:
         logger.info("Preloading embeddings")
         output_embeddings_p = get_image_embeddings_p(stage.image_encoder_p, train_dataset, stage.device, stage.weight_dtype, config.image_resize)
         output_embeddings_g = get_image_embeddings_g(stage.image_encoder_g, train_dataset, stage.device, stage.weight_dtype, config.image_resize)
@@ -295,6 +295,8 @@ def lora_finetuning(config: LoraFinetuningConfig):
         logger.info("move sd_model and vae to device")
         stage.sd_model = stage.sd_model.to(config.device)
         stage.vae = stage.vae.to(config.device)
+    
+    accelerator.wait_for_everyone()
 
         
     # Scheduler and math around the number of training steps.
