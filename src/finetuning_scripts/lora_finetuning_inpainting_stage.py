@@ -440,9 +440,9 @@ def lora_finetuning(config: LoraFinetuningConfig):
             if global_step >= config.max_train_steps:
                 break
             
-            if accelerator.is_main_process and global_step % config.validate_every_n_steps == 0:
+            if accelerator.is_main_process and global_step != 0 and global_step % config.validate_every_n_steps == 0:
                 logger.info("freeing memory")
-                del output_embeddings_p, output_embeddings_g, batch, latents, masked_latents, noise, timesteps, noisy_latents, unet_input, model_pred, target
+                del batch, latents, masked_latents, noise, timesteps, noisy_latents, unet_input, model_pred, target
                 gc.collect()
                 torch.cuda.empty_cache()
 
