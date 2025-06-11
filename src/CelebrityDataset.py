@@ -34,8 +34,8 @@ def CelebrityCollateFn(batch, image_size=(512, 512)):
     mask = torch.cat([mask1, mask0], dim=3)
     
     return {
-        "s_img_path": batch['s_img_path'],
-        "t_img_path": batch['t_img_path'],
+        "s_img_path": [sample['s_img_path'] for sample in batch],
+        "t_img_path": [sample['t_img_path'] for sample in batch],
         "source_image": source_images, 
         "target_image": target_image, 
         "vae_source_mask_image": vae_source_mask_images,
