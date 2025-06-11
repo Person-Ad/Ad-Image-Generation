@@ -77,6 +77,7 @@ class LoraFinetuningConfig(BaseModel):
     set_grads_to_none: bool = True
     
     validate_every_n_steps: int = 500
+    preload_embeddings: bool = True
     
     device: str = 'cuda'
 
@@ -105,6 +106,38 @@ def checkpoint_model(model, output_dir, global_step, epoch, accelerator):
         json.dump({"global_step": global_step, "epoch": epoch}, f)
     
     logger.info(f"Saved full checkpoint to {checkpoint_path}")
+   
+def get_image_embeddings_g(image_encoder_g, dataloader, device, weight_dtype) -> dict[str, torch.Tensor]:
+    """
+    Get the image embeddings for the target images.
+    """
+    image_encoder_g = image_encoder_g.to(device, weight_dtype)
+    outputs = {}
+    for batch in tqdm(dataloader):
+        bsz = batch["target_image"].shape[0]
+        batch["target_image"] = batch["target_image"].to(device, weight_dtype)
+        cond_image_feature_g = image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
+        cond_image_feature_g = cond_image_feature_g.to("cpu")
+        for idx in range(bsz):
+            outputs[batch["t_img_path"][idx]] = cond_image_feature_g[idx]
+    image_encoder_g = image_encoder_g.to("cpu")
+    return outputs
+
+def get_image_embeddings_p(image_encoder_p, dataloader, device, weight_dtype) -> dict[str, torch.Tensor]:
+    """
+    Get the image embeddings for the source images.
+    """
+    image_encoder_p = image_encoder_p.to(device, weight_dtype)
+    outputs = {}
+    for batch in dataloader:
+        bsz = batch["target_image"].shape[0]
+        batch["source_image"] = batch["source_image"].to(device, weight_dtype)
+        cond_image_feature_p = image_encoder_p(batch["source_image"]).last_hidden_state
+        cond_image_feature_p = cond_image_feature_p.to("cpu")
+        for idx in range(bsz):
+            outputs[batch["s_img_path"][idx]] = cond_image_feature_p[idx]
+    image_encoder_p = image_encoder_p.to("cpu")
+    return outputs
    
    
 def lora_finetuning(config: LoraFinetuningConfig):
@@ -143,8 +176,9 @@ def lora_finetuning(config: LoraFinetuningConfig):
     # log accelerator state
     logger.info(accelerator.state)
     
-    
     stage_config = InpaintingConfig(precision=config.mixed_precision)
+    if config.preload_embeddings:
+        stage_config.device = "cpu"
     stage = InpaintingStage(stage_config)
     
     lora_config = LoraConfig(
@@ -212,7 +246,19 @@ def lora_finetuning(config: LoraFinetuningConfig):
         num_workers=config.num_dataloader_workers, 
         collate_fn= lambda batch : CelebrityCollateFn(batch, image_size=config.image_resize)
     )
-    
+    output_embeddings_p = {}
+    output_embeddings_g = {}
+    if config.preload_embeddings:
+        logger.info("Preloading embeddings")
+        output_embeddings_p = get_image_embeddings_p(stage.image_encoder_p, train_dataloader, config.device, config.mixed_precision)
+        output_embeddings_g = get_image_embeddings_g(stage.image_encoder_g, train_dataloader, config.device, config.mixed_precision)
+        logger.info(f"Preloaded embeddings for {len(output_embeddings_p)} images")
+        # since we are moved all to cpu, we need to move the model to the device
+        logger.info("move sd_model and vae to device")
+        stage.sd_model = stage.sd_model.to(config.device)
+        stage.vae = stage.vae.to(config.device)
+
+        
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)
@@ -287,14 +333,20 @@ def lora_finetuning(config: LoraFinetuningConfig):
     for epoch in range(first_epoch, config.train_num_epochs):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(sd_model):
-                for key in ["mask", "source_image", "target_image", "source_target_pose", "source_target_image", "vae_source_mask_image"]:
+                for key in ["mask", "source_target_pose", "source_target_image", "vae_source_mask_image"]:
                     batch[key] = batch[key].to(accelerator.device, dtype=weight_dtype)
                 with torch.no_grad():
                     # Convert images to latent space
                     latents = stage.vae.encode(batch["source_target_image"]).latent_dist.sample() * stage.vae.config.scaling_factor
                     masked_latents = stage.vae.encode(batch["vae_source_mask_image"]).latent_dist.sample() * stage.vae.config.scaling_factor
-                    cond_image_feature_p = stage.image_encoder_p(batch["source_image"]).last_hidden_state
-                    cond_image_feature_g = stage.image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
+                    if config.preload_embeddings:
+                        cond_image_feature_p = torch.stack([output_embeddings_p[s_img_path] for s_img_path in batch["s_img_path"]], dim=0).to(accelerator.device, dtype=weight_dtype)
+                        cond_image_feature_g = torch.stack([output_embeddings_g[t_img_path] for t_img_path in batch["t_img_path"]], dim=0).to(accelerator.device, dtype=weight_dtype)
+                    else:
+                        batch["source_image"] = batch["source_image"].to(accelerator.device, dtype=weight_dtype)
+                        batch["target_image"] = batch["target_image"].to(accelerator.device, dtype=weight_dtype)
+                        cond_image_feature_p = stage.image_encoder_p(batch["source_image"]).last_hidden_state
+                        cond_image_feature_g = stage.image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
                 
                 noise = torch.randn_like(latents)
                 if config.noise_offset:
@@ -347,18 +399,29 @@ def lora_finetuning(config: LoraFinetuningConfig):
             if global_step >= config.max_train_steps:
                 break
             
-            if global_step % config.validate_every_n_steps == 0:
+            if accelerator.is_main_process and global_step % config.validate_every_n_steps == 0:
+                logger.info("freeing memory")
+                del output_embeddings_p, output_embeddings_g, batch, latents, masked_latents, noise, timesteps, noisy_latents, unet_input, model_pred, target
+                gc.collect()
+                torch.cuda.empty_cache()
+
                 logger.info(f"Running validation at step {global_step}")
                 sd_model.eval()
                 stage.sd_model = sd_model
+                stage.image_encoder_p = stage.image_encoder_p.to(accelerator.device)
+                stage.image_encoder_g = stage.image_encoder_g.to(accelerator.device)
                 output_images = []
                 with torch.no_grad():
                     for idx in tqdm(range(len(val_dataset)), desc="Validation"):
                         output = stage([InpaintingSampleInput.model_validate(val_dataset[idx])])
                         output_images.append(output)
+                logger.info("logging images to wandb")
                 accelerator.log({
                     "outputs": wandb.Image(show_images(torch.stack(output_images, dim=1).squeeze(0)))
                 }, step=global_step)
+                stage.image_encoder_p = stage.image_encoder_p.to("cpu")
+                stage.image_encoder_g = stage.image_encoder_g.to("cpu")
+                sd_model.train()
 
     if accelerator.is_main_process:
         checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator)

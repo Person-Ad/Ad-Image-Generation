@@ -34,6 +34,8 @@ def CelebrityCollateFn(batch, image_size=(512, 512)):
     mask = torch.cat([mask1, mask0], dim=3)
     
     return {
+        "s_img_path": batch['s_img_path'],
+        "t_img_path": batch['t_img_path'],
         "source_image": source_images, 
         "target_image": target_image, 
         "vae_source_mask_image": vae_source_mask_images,
@@ -136,11 +138,14 @@ class CelebrityDataset(Dataset):
                 "image_size": self.image_resize
             }
             
-        return self.processor.process_input(s_img_path, 
+        return {
+            "s_img_path": s_img_path,
+            "t_img_path": t_img_path,
+            **self.processor.process_input(s_img_path, 
                                             t_img_path, 
                                             s_pose_path, 
                                             t_pose_path,
-                                            self.image_resize)
+                                            self.image_resize)}
         
 if __name__ == "__main__":
     dataset = CelebrityDataset(celebrity_name="mo_salah", image_resize=(1024, 1024))
