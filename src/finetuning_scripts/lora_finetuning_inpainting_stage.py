@@ -25,6 +25,7 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import set_seed, show_images
 from constants import BASE_DIR
+from transformers import CLIPImageProcessor
 
 UNET_TARGET_MODULES = ["to_k", "to_q", "to_v", "to_out.0"]
 # logger = get_logger(__name__)
@@ -109,45 +110,69 @@ def checkpoint_model(model, output_dir, global_step, epoch, accelerator):
     
     logger.info(f"Saved full checkpoint to {checkpoint_path}")
    
-def get_image_embeddings_g(image_encoder_g, dataset, device, weight_dtype, image_size) -> dict[str, torch.Tensor]:
+def get_image_embeddings_g(image_encoder_g, dataset, device, weight_dtype, image_size, batch_size=32) -> dict[str, torch.Tensor]:
     """
-    Get the image embeddings for the target images.
+    Get the image embeddings for the target images in batches.
     """
-    from transformers import CLIPImageProcessor
-    
     image_encoder_g = image_encoder_g.to(device)
+    image_encoder_g.eval()
     clip_image_processor = CLIPImageProcessor()
-    
+
+    # Collect image paths
     image_paths = list(dataset.cleaned_images_directory.glob("*.[jp][pn]*g"))
     outputs = {}
-    for image_path in tqdm(image_paths):
-        t_img = Image.open(image_path).convert("RGB").resize(image_size, Image.BICUBIC)
-        clip_t_img = clip_image_processor(images=t_img, return_tensors="pt").pixel_values.squeeze(dim=0)
-        target_image = torch.stack([clip_t_img]).to(device, dtype=weight_dtype, memory_format=torch.contiguous_format)
-        cond_image_feature_g = image_encoder_g(target_image).image_embeds.unsqueeze(1)
-        cond_image_feature_g = cond_image_feature_g.to("cpu")
-        outputs[image_path] = cond_image_feature_g[0]
+
+    # Preprocessing images
+    def load_and_preprocess(image_path):
+        img = Image.open(image_path).convert("RGB").resize(image_size, Image.BICUBIC)
+        return clip_image_processor(images=img, return_tensors="pt").pixel_values.squeeze(0)
+
+    # Load all processed tensors into memory (can be optimized with a Dataset if needed)
+    processed_images = [load_and_preprocess(p) for p in tqdm(image_paths, desc="Preprocessing")]
+
+    # Batch through the image embeddings
+    for i in tqdm(range(0, len(image_paths), batch_size), desc="Embedding"):
+        batch_images = processed_images[i:i+batch_size]
+        batch_tensor = torch.stack(batch_images).to(device, dtype=weight_dtype, memory_format=torch.contiguous_format)
+
+        with torch.no_grad():
+            batch_embeds = image_encoder_g(batch_tensor).image_embeds.to("cpu")
+
+        for path, embed in zip(image_paths[i:i+batch_size], batch_embeds):
+            outputs[path] = embed.unsqueeze(0)
+
     image_encoder_g = image_encoder_g.to("cpu")
     return outputs
 
-def get_image_embeddings_p(image_encoder_p, dataset, device, weight_dtype, image_size) -> dict[str, torch.Tensor]:
+def get_image_embeddings_p(image_encoder_p, dataset, device, weight_dtype, image_size, batch_size=32) -> dict[str, torch.Tensor]:
     """
     Get the image embeddings for the source images.
     """
-    from transformers import CLIPImageProcessor
-    
     image_encoder_p = image_encoder_p.to(device)
+    image_encoder_p.eval()
+    
     clip_image_processor = CLIPImageProcessor()
     
     image_paths = list(dataset.cleaned_images_directory.glob("*.[jp][pn]*g"))
     outputs = {}
-    for image_path in tqdm(image_paths):
-        s_img = Image.open(image_path).convert("RGB").resize(image_size, Image.BICUBIC)
-        clip_t_img = clip_image_processor(images=s_img, return_tensors="pt").pixel_values.squeeze(dim=0)
-        source_image = torch.stack([clip_t_img]).to(device, dtype=weight_dtype, memory_format=torch.contiguous_format)
-        cond_image_feature_p = image_encoder_p(source_image).last_hidden_state
-        cond_image_feature_p = cond_image_feature_p.to("cpu")
-        outputs[image_path] = cond_image_feature_p[0]
+    
+    # Preprocessing images
+    def load_and_preprocess(image_path):
+        img = Image.open(image_path).convert("RGB").resize(image_size, Image.BICUBIC)
+        return clip_image_processor(images=img, return_tensors="pt").pixel_values.squeeze(0)
+    # Load all processed tensors into memory (can be optimized with a Dataset if needed)
+    processed_images = [load_and_preprocess(p) for p in tqdm(image_paths, desc="Preprocessing")]
+
+    for i in tqdm(range(0, len(image_paths), batch_size), desc="Embedding"):
+        batch_images = processed_images[i:i+batch_size]
+        batch_tensor = torch.stack(batch_images).to(device, dtype=weight_dtype, memory_format=torch.contiguous_format)
+        
+        with torch.no_grad():
+            batch_embeds = image_encoder_p(batch_tensor).last_hidden_state.to("cpu")
+            
+        for path, embed in zip(image_paths[i:i+batch_size], batch_embeds):
+            outputs[path] = embed.unsqueeze(0)
+            
     image_encoder_p = image_encoder_p.to("cpu")
     return outputs
    
