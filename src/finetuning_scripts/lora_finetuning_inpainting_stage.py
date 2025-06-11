@@ -449,7 +449,7 @@ def main():
 
     if config.wandb_key:
         wandb.login(key=config.wandb_key)
-        # wandb.init(project=config.wandb_project_name)
+        wandb.init(project=config.wandb_project_name)
 
     lora_finetuning(config)
 
