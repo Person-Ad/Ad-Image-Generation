@@ -1,3 +1,4 @@
+import gc
 import json
 import math
 import torch
@@ -6,17 +7,18 @@ import logging
 import argparse
 import diffusers
 import transformers
-from tqdm.auto import tqdm
+from PIL import Image
 from pathlib import Path
+from tqdm.auto import tqdm
 from pydantic import BaseModel
 import torch.nn.functional as F
 from accelerate import Accelerator
 from fastcore.script import call_parse
 from accelerate.logging import get_logger
 from peft import LoraConfig, get_peft_model
+from transformers import CLIPImageProcessor
 from torch.utils.data import Dataset, DataLoader
 from diffusers.optimization import get_scheduler
-from PIL import Image
 from diffusers.utils.import_utils import is_xformers_available
 from loguru import logger
 # Local imports
@@ -25,7 +27,6 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import set_seed, show_images
 from constants import BASE_DIR
-from transformers import CLIPImageProcessor
 
 UNET_TARGET_MODULES = ["to_k", "to_q", "to_v", "to_out.0"]
 # logger = get_logger(__name__)
@@ -136,10 +137,10 @@ def get_image_embeddings_g(image_encoder_g, dataset, device, weight_dtype, image
         batch_tensor = torch.stack(batch_images).to(device, dtype=weight_dtype, memory_format=torch.contiguous_format)
 
         with torch.no_grad():
-            batch_embeds = image_encoder_g(batch_tensor).image_embeds.to("cpu")
+            batch_embeds = image_encoder_g(batch_tensor).image_embeds.unsqueeze(1).to("cpu")
 
         for path, embed in zip(image_paths[i:i+batch_size], batch_embeds):
-            outputs[path] = embed.unsqueeze(0)
+            outputs[path] = embed
 
     image_encoder_g = image_encoder_g.to("cpu")
     return outputs
@@ -171,7 +172,7 @@ def get_image_embeddings_p(image_encoder_p, dataset, device, weight_dtype, image
             batch_embeds = image_encoder_p(batch_tensor).last_hidden_state.to("cpu")
             
         for path, embed in zip(image_paths[i:i+batch_size], batch_embeds):
-            outputs[path] = embed.unsqueeze(0)
+            outputs[path] = embed
             
     image_encoder_p = image_encoder_p.to("cpu")
     return outputs
@@ -387,8 +388,6 @@ def lora_finetuning(config: LoraFinetuningConfig):
                         batch["target_image"] = batch["target_image"].to(accelerator.device, dtype=weight_dtype)
                         cond_image_feature_p = stage.image_encoder_p(batch["source_image"]).last_hidden_state
                         cond_image_feature_g = stage.image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
-                        logger.info(f"cond_image_feature_p shape = {cond_image_feature_p.shape}")
-                        logger.info(f"cond_image_feature_g shape = {cond_image_feature_g.shape}")
                 
                 noise = torch.randn_like(latents)
                 if config.noise_offset:
