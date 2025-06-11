@@ -3,6 +3,7 @@ import math
 import torch
 import wandb
 import logging
+import argparse
 import diffusers
 import transformers
 from tqdm.auto import tqdm
@@ -430,18 +431,27 @@ def lora_finetuning(config: LoraFinetuningConfig):
     accelerator.wait_for_everyone()
     accelerator.end_training()
     
-@call_parse
-def main(config_path: str = "config/lora_finetune_example.json" # Path to config JSON file
-        ):
-    """Run LoRA fine-tuning using a JSON config."""
-    config_path = BASE_DIR / config_path
+def main():
+    parser = argparse.ArgumentParser(description="Run LoRA fine-tuning using a JSON config.")
+    parser.add_argument(
+        "--config_path",
+        type=str,
+        default="config/lora_finetune_example.json",
+        help="Path to config JSON file"
+    )
+    args = parser.parse_args()
+
+    config_path = BASE_DIR / args.config_path
     with open(config_path, "r") as f:
         cfg_dict = json.load(f)
-        
+
     config = LoraFinetuningConfig(**cfg_dict)
+
     if config.wandb_key:
         wandb.login(key=config.wandb_key)
-        wandb.init(project=config.wandb_project_name)
-        
+        # wandb.init(project=config.wandb_project_name)
+
     lora_finetuning(config)
-    
+
+if __name__ == "__main__":
+    main()
