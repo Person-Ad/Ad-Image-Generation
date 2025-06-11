@@ -17,7 +17,7 @@ from peft import LoraConfig, get_peft_model
 from torch.utils.data import Dataset, DataLoader
 from diffusers.optimization import get_scheduler
 from diffusers.utils.import_utils import is_xformers_available
-
+from loguru import logger
 # Local imports
 import os
 import sys
@@ -26,7 +26,7 @@ from utils import set_seed, show_images
 from constants import BASE_DIR
 
 UNET_TARGET_MODULES = ["to_k", "to_q", "to_v", "to_out.0"]
-logger = get_logger(__name__)
+# logger = get_logger(__name__)
 
 class LoraFinetuningConfig(BaseModel):
     # Configuration for Dataset
@@ -161,7 +161,8 @@ def lora_finetuning(config: LoraFinetuningConfig):
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO, )
-    logger.info(accelerator.state, main_process_only=False)
+    # logger.info(accelerator.state, main_process_only=False)
+    logger.info(accelerator.state)
     if accelerator.is_local_main_process:
         transformers.utils.logging.set_verbosity_warning()
         diffusers.utils.logging.set_verbosity_info()
