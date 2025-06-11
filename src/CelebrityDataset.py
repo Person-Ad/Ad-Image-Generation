@@ -146,12 +146,12 @@ class CelebrityDataset(Dataset):
             self.src_tar_pairs = []
             for src_path, tar_path in permutations(image_paths, 2):
                 if (
-                    src_path in self.embedding_dict
-                    and tar_path in self.embedding_dict
+                    src_path.name in self.embedding_dict
+                    and tar_path.name in self.embedding_dict
                 ):
                     similarity = compute_cosine_similarity(
-                        self.embedding_dict[src_path].squeeze(0),
-                        self.embedding_dict[tar_path].squeeze(0),
+                        self.embedding_dict[src_path.name].squeeze(0),
+                        self.embedding_dict[tar_path.name].squeeze(0),
                     )
                     if similarity >= self.similarity_threshold:
                         self.src_tar_pairs.append((src_path.name, tar_path.name))

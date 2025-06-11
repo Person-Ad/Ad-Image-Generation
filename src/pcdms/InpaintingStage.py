@@ -175,6 +175,8 @@ class InpaintingStage():
             self.image_encoder_p.requires_grad_(False)
         else:
             self.image_encoder_p_dict = torch.load(self.config.preloaded_feature_dino_path)
+            self.image_encoder_p_dict = {k.name: v for k, v in self.image_encoder_p_dict.items()}
+            
             logger.info(f"loaded dino feats of {len(self.image_encoder_p_dict)} features")
             
         progress_bar.update(1)
@@ -187,6 +189,7 @@ class InpaintingStage():
             self.image_encoder_g.requires_grad_(False)
         else:
             self.image_encoder_g_dict = torch.load(self.config.preloaded_feature_clip_path)
+            self.image_encoder_g_dict = {k.name: v for k, v in self.image_encoder_g_dict.items()}
             logger.info(f"loaded clip feats of {len(self.image_encoder_g_dict)} features")
             
         progress_bar.update(1)
@@ -227,13 +230,13 @@ class InpaintingStage():
             masked_latents = self.vae.encode(inputs["vae_source_mask_image"]).latent_dist.sample() * self.vae.config.scaling_factor
             # Get the image embedding for conditioning
             if self.config.preloaded_feature_dino_path:
-                cond_image_feature_p = (torch.stack([ self.image_encoder_p_dict[sample.s_img_path] for sample in input_paths], dim=0)
+                cond_image_feature_p = (torch.stack([ self.image_encoder_p_dict[sample.s_img_path.name] for sample in input_paths], dim=0)
                                         .to(self.device, dtype=self.weight_dtype))
             else:
                 cond_image_feature_p = self.image_encoder_p(inputs["source_image"].to(self.device, dtype=self.weight_dtype)).last_hidden_state
             
             if self.config.preloaded_feature_clip_path:
-                cond_image_feature_g = (torch.stack([ self.image_encoder_g_dict[sample.t_img_path] for sample in input_paths], dim=0)
+                cond_image_feature_g = (torch.stack([ self.image_encoder_g_dict[sample.t_img_path.name] for sample in input_paths], dim=0)
                                         .to(self.device, dtype=self.weight_dtype))
             else:
                 cond_image_feature_g = self.image_encoder_g(inputs["target_image"].to(self.device, dtype=self.weight_dtype)).image_embeds.unsqueeze(1)

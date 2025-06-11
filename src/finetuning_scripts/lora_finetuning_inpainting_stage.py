@@ -314,13 +314,13 @@ def lora_finetuning(config: LoraFinetuningConfig):
                     masked_latents = stage.vae.encode(batch["vae_source_mask_image"]).latent_dist.sample() * stage.vae.config.scaling_factor
                     
                     if config.preloaded_feature_dino_path:
-                        cond_image_feature_p = torch.stack([stage.image_encoder_p_dict[s_img_path] for s_img_path in batch["s_img_path"]], dim=0).to(accelerator.device, dtype=weight_dtype)
+                        cond_image_feature_p = torch.stack([stage.image_encoder_p_dict[s_img_path.name] for s_img_path in batch["s_img_path"]], dim=0).to(accelerator.device, dtype=weight_dtype)
                     else:
                         batch["source_image"] = batch["source_image"].to(accelerator.device, dtype=weight_dtype)
                         cond_image_feature_p = stage.image_encoder_p(batch["source_image"]).last_hidden_state
                         
                     if config.preloaded_feature_clip_path:
-                        cond_image_feature_g = torch.stack([stage.image_encoder_g_dict[t_img_path] for t_img_path in batch["t_img_path"]], dim=0).to(accelerator.device, dtype=weight_dtype)
+                        cond_image_feature_g = torch.stack([stage.image_encoder_g_dict[t_img_path.name] for t_img_path in batch["t_img_path"]], dim=0).to(accelerator.device, dtype=weight_dtype)
                     else:
                         batch["target_image"] = batch["target_image"].to(accelerator.device, dtype=weight_dtype)
                         cond_image_feature_g = stage.image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
