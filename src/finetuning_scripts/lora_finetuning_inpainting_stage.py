@@ -387,8 +387,8 @@ def lora_finetuning(config: LoraFinetuningConfig):
                         batch["target_image"] = batch["target_image"].to(accelerator.device, dtype=weight_dtype)
                         cond_image_feature_p = stage.image_encoder_p(batch["source_image"]).last_hidden_state
                         cond_image_feature_g = stage.image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
-                        logger.debug(f"cond_image_feature_p shape = {cond_image_feature_p.shape}")
-                        logger.debug(f"cond_image_feature_g shape = {cond_image_feature_g.shape}")
+                        logger.info(f"cond_image_feature_p shape = {cond_image_feature_p.shape}")
+                        logger.info(f"cond_image_feature_g shape = {cond_image_feature_g.shape}")
                 
                 noise = torch.randn_like(latents)
                 if config.noise_offset:
