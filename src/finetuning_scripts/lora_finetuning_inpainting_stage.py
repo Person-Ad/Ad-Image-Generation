@@ -130,7 +130,7 @@ def get_image_embeddings_p(image_encoder_p, dataloader, device, weight_dtype) ->
     """
     image_encoder_p = image_encoder_p.to(device)
     outputs = {}
-    for batch in dataloader:
+    for batch in tqdm(dataloader):
         bsz = batch["target_image"].shape[0]
         batch["source_image"] = batch["source_image"].to(device, dtype=weight_dtype)
         cond_image_feature_p = image_encoder_p(batch["source_image"]).last_hidden_state
