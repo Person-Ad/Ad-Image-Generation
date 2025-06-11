@@ -81,8 +81,10 @@ class LoraFinetuningConfig(BaseModel):
     set_grads_to_none: bool = True
     
     validate_every_n_steps: int = 500
+    split_ratio: float = 0.999
     preloaded_feature_dino_path: str | Path | None = None 
     preloaded_feature_clip_path: str | Path | None = None 
+    similarity_threshold: float = 0.7
     
     device: str = 'cuda'
 
@@ -200,8 +202,9 @@ def lora_finetuning(config: LoraFinetuningConfig):
         num_images=config.num_images, 
         seed=config.seed, 
         embedding_dict=stage.image_encoder_g_dict, # pass embeddings to threshold sim pairs
+        similarity_threshold=config.similarity_threshold,
         max_samples=config.max_samples,
-        split_ratio=0.999
+        split_ratio=config.split_ratio
     )
     val_dataset = CelebrityDataset(
         root_dir=config.root_dir, 
@@ -210,9 +213,10 @@ def lora_finetuning(config: LoraFinetuningConfig):
         num_images=config.num_images, 
         seed=config.seed, 
         embedding_dict=stage.image_encoder_g_dict, # pass embeddings to threshold sim pairs
+        similarity_threshold=config.similarity_threshold,
         max_samples=config.max_samples,
         split="val",
-        split_ratio=0.999
+        split_ratio=config.split_ratio
     )
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         train_dataset, num_replicas=accelerator.num_processes, rank=accelerator.process_index, shuffle=True)
