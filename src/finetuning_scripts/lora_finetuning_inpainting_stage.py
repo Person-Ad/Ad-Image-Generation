@@ -111,11 +111,11 @@ def get_image_embeddings_g(image_encoder_g, dataloader, device, weight_dtype) ->
     """
     Get the image embeddings for the target images.
     """
-    image_encoder_g = image_encoder_g.to(device, weight_dtype)
+    image_encoder_g = image_encoder_g.to(device)
     outputs = {}
     for batch in tqdm(dataloader):
         bsz = batch["target_image"].shape[0]
-        batch["target_image"] = batch["target_image"].to(device, weight_dtype)
+        batch["target_image"] = batch["target_image"].to(device, dtype=weight_dtype)
         cond_image_feature_g = image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
         cond_image_feature_g = cond_image_feature_g.to("cpu")
         for idx in range(bsz):
@@ -127,11 +127,11 @@ def get_image_embeddings_p(image_encoder_p, dataloader, device, weight_dtype) ->
     """
     Get the image embeddings for the source images.
     """
-    image_encoder_p = image_encoder_p.to(device, weight_dtype)
+    image_encoder_p = image_encoder_p.to(device)
     outputs = {}
     for batch in dataloader:
         bsz = batch["target_image"].shape[0]
-        batch["source_image"] = batch["source_image"].to(device, weight_dtype)
+        batch["source_image"] = batch["source_image"].to(device, dtype=weight_dtype)
         cond_image_feature_p = image_encoder_p(batch["source_image"]).last_hidden_state
         cond_image_feature_p = cond_image_feature_p.to("cpu")
         for idx in range(bsz):
@@ -410,6 +410,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 stage.sd_model = sd_model
                 stage.image_encoder_p = stage.image_encoder_p.to(accelerator.device)
                 stage.image_encoder_g = stage.image_encoder_g.to(accelerator.device)
+                stage.device = accelerator.device
                 output_images = []
                 with torch.no_grad():
                     for idx in tqdm(range(len(val_dataset)), desc="Validation"):
