@@ -16,6 +16,7 @@ from accelerate.logging import get_logger
 from peft import LoraConfig, get_peft_model
 from torch.utils.data import Dataset, DataLoader
 from diffusers.optimization import get_scheduler
+from PIL import Image
 from diffusers.utils.import_utils import is_xformers_available
 from loguru import logger
 # Local imports
@@ -108,35 +109,45 @@ def checkpoint_model(model, output_dir, global_step, epoch, accelerator):
     
     logger.info(f"Saved full checkpoint to {checkpoint_path}")
    
-def get_image_embeddings_g(image_encoder_g, dataloader, device, weight_dtype) -> dict[str, torch.Tensor]:
+def get_image_embeddings_g(image_encoder_g, dataset, device, weight_dtype, image_size) -> dict[str, torch.Tensor]:
     """
     Get the image embeddings for the target images.
     """
+    from transformers import CLIPImageProcessor
+    
     image_encoder_g = image_encoder_g.to(device)
+    clip_image_processor = CLIPImageProcessor()
+    
+    image_paths = list(dataset.cleaned_images_directory.glob("*.[jp][pn]*g"))
     outputs = {}
-    for batch in tqdm(dataloader):
-        bsz = batch["target_image"].shape[0]
-        batch["target_image"] = batch["target_image"].to(device, dtype=weight_dtype)
-        cond_image_feature_g = image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
+    for image_path in tqdm(image_paths):
+        t_img = Image.open(image_path).convert("RGB").resize(image_size, Image.BICUBIC)
+        clip_t_img = clip_image_processor(images=t_img, return_tensors="pt").pixel_values.squeeze(dim=0)
+        target_image = torch.stack([clip_t_img]).to(device, dtype=weight_dtype, memory_format=torch.contiguous_format)
+        cond_image_feature_g = image_encoder_g(target_image).image_embeds.unsqueeze(1)
         cond_image_feature_g = cond_image_feature_g.to("cpu")
-        for idx in range(bsz):
-            outputs[batch["t_img_path"][idx]] = cond_image_feature_g[idx]
+        outputs[image_path] = cond_image_feature_g[0]
     image_encoder_g = image_encoder_g.to("cpu")
     return outputs
 
-def get_image_embeddings_p(image_encoder_p, dataloader, device, weight_dtype) -> dict[str, torch.Tensor]:
+def get_image_embeddings_p(image_encoder_p, dataset, device, weight_dtype, image_size) -> dict[str, torch.Tensor]:
     """
     Get the image embeddings for the source images.
     """
+    from transformers import CLIPImageProcessor
+    
     image_encoder_p = image_encoder_p.to(device)
+    clip_image_processor = CLIPImageProcessor()
+    
+    image_paths = list(dataset.cleaned_images_directory.glob("*.[jp][pn]*g"))
     outputs = {}
-    for batch in tqdm(dataloader):
-        bsz = batch["target_image"].shape[0]
-        batch["source_image"] = batch["source_image"].to(device, dtype=weight_dtype)
-        cond_image_feature_p = image_encoder_p(batch["source_image"]).last_hidden_state
+    for image_path in tqdm(image_paths):
+        s_img = Image.open(image_path).convert("RGB").resize(image_size, Image.BICUBIC)
+        clip_t_img = clip_image_processor(images=s_img, return_tensors="pt").pixel_values.squeeze(dim=0)
+        source_image = torch.stack([clip_t_img]).to(device, dtype=weight_dtype, memory_format=torch.contiguous_format)
+        cond_image_feature_p = image_encoder_p(source_image).last_hidden_state
         cond_image_feature_p = cond_image_feature_p.to("cpu")
-        for idx in range(bsz):
-            outputs[batch["s_img_path"][idx]] = cond_image_feature_p[idx]
+        outputs[image_path] = cond_image_feature_p[0]
     image_encoder_p = image_encoder_p.to("cpu")
     return outputs
    
@@ -252,8 +263,8 @@ def lora_finetuning(config: LoraFinetuningConfig):
     output_embeddings_g = {}
     if config.preload_embeddings:
         logger.info("Preloading embeddings")
-        output_embeddings_p = get_image_embeddings_p(stage.image_encoder_p, train_dataloader, stage.device, stage.weight_dtype)
-        output_embeddings_g = get_image_embeddings_g(stage.image_encoder_g, train_dataloader, stage.device, stage.weight_dtype)
+        output_embeddings_p = get_image_embeddings_p(stage.image_encoder_p, train_dataset, stage.device, stage.weight_dtype, config.image_resize)
+        output_embeddings_g = get_image_embeddings_g(stage.image_encoder_g, train_dataset, stage.device, stage.weight_dtype, config.image_resize)
         logger.info(f"Preloaded embeddings for {len(output_embeddings_p)} images")
         # since we are moved all to cpu, we need to move the model to the device
         logger.info("move sd_model and vae to device")

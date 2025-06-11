@@ -97,8 +97,7 @@ class InpaintingProcessor:
         trans_s_img_mask = self.img_transform(s_img_mask)
         trans_st_img = self.img_transform(st_img)
         trans_st_pose = self.img_transform(st_pose)
-        clip_s_img = (self.clip_image_processor(images=s_img, return_tensors="pt").pixel_values).squeeze(dim=0)
-        clip_t_img = (self.clip_image_processor(images=t_img, return_tensors="pt").pixel_values).squeeze(dim=0)
+        
         return {
             "source_image": clip_s_img, 
             "target_image": clip_t_img, 
