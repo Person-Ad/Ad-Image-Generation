@@ -33,9 +33,14 @@ class InpaintingConfig(BaseModel):
     
     # TODO: add sequential offloading option
     # sequential_offloading = False  # Whether offloading models one by one or not
+    
     user_prior_stage: bool = False # Whether to use user prior stage or Clip
     device: str = "cuda"  # Device to run the model on, e.g., 'cuda' or 'cpu'
     precision: str = "fp16"  # Precision for model weights, e.g., 'fp16' or 'fp32'
+    
+    preloaded_feature_dino_path: str | Path | None = None 
+    preloaded_feature_clip_path: str | Path | None = None 
+    
 
 class InpaintingSampleInput(BaseModel):
     """
@@ -56,7 +61,7 @@ class InpaintingProcessor:
     """
     Processor for handling image inputs and transformations for the Inpainting Stage.
     """
-    def __init__(self, device='cuda') -> None:
+    def __init__(self, device='cuda', preloaded_feature_dino=False, preloaded_feature_clip=False) -> None:
         self.clip_image_processor = CLIPImageProcessor()
         self.img_transform = transforms.Compose([
             transforms.ToTensor(),
@@ -165,17 +170,25 @@ class InpaintingStage():
 
         progress_bar.update(1)
         progress_bar.set_description("Loading DinoV2 Model")
-        self.image_encoder_p = Dinov2Model.from_pretrained("facebook/dinov2-giant").to(self.device, dtype=self.weight_dtype)
-        self.image_encoder_p.requires_grad_(False)
-        
+        if not self.config.preloaded_feature_dino_path:
+            self.image_encoder_p = Dinov2Model.from_pretrained("facebook/dinov2-giant").to(self.device, dtype=self.weight_dtype)
+            self.image_encoder_p.requires_grad_(False)
+        else:
+            self.image_encoder_p_dict = torch.load(self.config.preloaded_feature_dino_path)
+            logger.info(f"loaded dino feats of {len(self.image_encoder_p_dict)} features")
+            
         progress_bar.update(1)
         progress_bar.set_description("Loading Prior/Clip Model")
-        if not self.config.user_prior_stage:
-            self.image_encoder_g = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-H-14-laion2B-s32B-b79K").to(self.device, dtype=self.weight_dtype)
+        if not self.config.preloaded_feature_clip_path:
+            if not self.config.user_prior_stage:
+                self.image_encoder_g = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-H-14-laion2B-s32B-b79K").to(self.device, dtype=self.weight_dtype)
+            else:
+                raise NotImplementedError("User prior stage is not implemented yet.")
+            self.image_encoder_g.requires_grad_(False)
         else:
-            raise NotImplementedError("User prior stage is not implemented yet.")
-        self.image_encoder_g.requires_grad_(False)
-        
+            self.image_encoder_g_dict = torch.load(self.config.preloaded_feature_clip_path)
+            logger.info(f"loaded clip feats of {len(self.image_encoder_g_dict)} features")
+            
         progress_bar.update(1)
         progress_bar.set_description("Loading Full Checkpoint")
         self.sd_model = SDInPaintModel(self.unet)
@@ -193,7 +206,7 @@ class InpaintingStage():
         self.image_encoder_g = self.image_encoder_g.to(device)
         self.sd_model = self.sd_model.to(device)
         
-    def __call__(self, inputs: list[InpaintingSampleInput], config: InpaintingInferenceConfig = InpaintingInferenceConfig()):
+    def __call__(self, input_paths: list[InpaintingSampleInput], config: InpaintingInferenceConfig = InpaintingInferenceConfig()):
         """
         Args:
             s_img_path (str): Path to the source image.
@@ -202,19 +215,28 @@ class InpaintingStage():
             t_pose_path (str, optional): Path to the target pose image. Defaults to None.
             image_size (tuple, optional): Size of the images. Defaults to (512, 512).
         """
-        inputs = self.processor.process_batch(inputs)
+        inputs = self.processor.process_batch(input_paths)
 
-        for key in ["mask", "source_image", "target_image", "source_target_pose", "source_target_image", "vae_source_mask_image"]:
+        for key in ["mask", "source_target_pose", "source_target_image", "vae_source_mask_image"]:
             inputs[key] = inputs[key].to(self.device, dtype=self.weight_dtype)
-
+    
         with torch.no_grad():
             # Convert images to latent space
             latents = self.vae.encode(inputs["source_target_image"]).latent_dist.sample() * self.vae.config.scaling_factor
             # Get the masked image latents
             masked_latents = self.vae.encode(inputs["vae_source_mask_image"]).latent_dist.sample() * self.vae.config.scaling_factor
             # Get the image embedding for conditioning
-            cond_image_feature_p = self.image_encoder_p(inputs["source_image"]).last_hidden_state
-            cond_image_feature_g = self.image_encoder_g(inputs["target_image"]).image_embeds.unsqueeze(1)
+            if self.config.preloaded_feature_dino_path:
+                cond_image_feature_p = (torch.stack([ self.image_encoder_p_dict[sample.s_img_path] for sample in input_paths], dim=0)
+                                        .to(self.device, dtype=self.weight_dtype))
+            else:
+                cond_image_feature_p = self.image_encoder_p(inputs["source_image"].to(self.device, dtype=self.weight_dtype)).last_hidden_state
+            
+            if self.config.preloaded_feature_clip_path:
+                cond_image_feature_g = (torch.stack([ self.image_encoder_g_dict[sample.t_img_path] for sample in input_paths], dim=0)
+                                        .to(self.device, dtype=self.weight_dtype))
+            else:
+                cond_image_feature_g = self.image_encoder_g(inputs["target_image"].to(self.device, dtype=self.weight_dtype)).image_embeds.unsqueeze(1)
 
 
         ####################################################################

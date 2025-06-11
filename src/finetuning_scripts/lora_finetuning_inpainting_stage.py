@@ -81,7 +81,8 @@ class LoraFinetuningConfig(BaseModel):
     set_grads_to_none: bool = True
     
     validate_every_n_steps: int = 500
-    preload_embeddings: bool = True
+    preloaded_feature_dino_path: str | Path | None = None 
+    preloaded_feature_clip_path: str | Path | None = None 
     
     device: str = 'cuda'
 
@@ -110,78 +111,12 @@ def checkpoint_model(model, output_dir, global_step, epoch, accelerator):
         json.dump({"global_step": global_step, "epoch": epoch}, f)
     
     logger.info(f"Saved full checkpoint to {checkpoint_path}")
-   
-def get_image_embeddings_g(image_encoder_g, dataset, device, weight_dtype, image_size, batch_size=32) -> dict[str, torch.Tensor]:
-    """
-    Get the image embeddings for the target images in batches.
-    """
-    image_encoder_g = image_encoder_g.to(device)
-    image_encoder_g.eval()
-    clip_image_processor = CLIPImageProcessor()
 
-    # Collect image paths
-    image_paths = list(dataset.cleaned_images_directory.glob("*.[jp][pn]*g"))
-    outputs = {}
-
-    # Preprocessing images
-    def load_and_preprocess(image_path):
-        img = Image.open(image_path).convert("RGB").resize(image_size, Image.BICUBIC)
-        return clip_image_processor(images=img, return_tensors="pt").pixel_values.squeeze(0)
-
-    # Load all processed tensors into memory (can be optimized with a Dataset if needed)
-    processed_images = [load_and_preprocess(p) for p in tqdm(image_paths, desc="Preprocessing")]
-
-    # Batch through the image embeddings
-    for i in tqdm(range(0, len(image_paths), batch_size), desc="Embedding"):
-        batch_images = processed_images[i:i+batch_size]
-        batch_tensor = torch.stack(batch_images).to(device, dtype=weight_dtype, memory_format=torch.contiguous_format)
-
-        with torch.no_grad():
-            batch_embeds = image_encoder_g(batch_tensor).image_embeds.unsqueeze(1).to("cpu")
-
-        for path, embed in zip(image_paths[i:i+batch_size], batch_embeds):
-            outputs[path] = embed
-
-    image_encoder_g = image_encoder_g.to("cpu")
-    return outputs
-
-def get_image_embeddings_p(image_encoder_p, dataset, device, weight_dtype, image_size, batch_size=32) -> dict[str, torch.Tensor]:
-    """
-    Get the image embeddings for the source images.
-    """
-    image_encoder_p = image_encoder_p.to(device)
-    image_encoder_p.eval()
-    
-    clip_image_processor = CLIPImageProcessor()
-    
-    image_paths = list(dataset.cleaned_images_directory.glob("*.[jp][pn]*g"))
-    outputs = {}
-    
-    # Preprocessing images
-    def load_and_preprocess(image_path):
-        img = Image.open(image_path).convert("RGB").resize(image_size, Image.BICUBIC)
-        return clip_image_processor(images=img, return_tensors="pt").pixel_values.squeeze(0)
-    # Load all processed tensors into memory (can be optimized with a Dataset if needed)
-    processed_images = [load_and_preprocess(p) for p in tqdm(image_paths, desc="Preprocessing")]
-
-    for i in tqdm(range(0, len(image_paths), batch_size), desc="Embedding"):
-        batch_images = processed_images[i:i+batch_size]
-        batch_tensor = torch.stack(batch_images).to(device, dtype=weight_dtype, memory_format=torch.contiguous_format)
-        
-        with torch.no_grad():
-            batch_embeds = image_encoder_p(batch_tensor).last_hidden_state.to("cpu")
-            
-        for path, embed in zip(image_paths[i:i+batch_size], batch_embeds):
-            outputs[path] = embed
-            
-    image_encoder_p = image_encoder_p.to("cpu")
-    return outputs
-   
    
 def lora_finetuning(config: LoraFinetuningConfig):
     import bitsandbytes as bnb
     from pcdms.InpaintingStage import InpaintingStage, InpaintingConfig, InpaintingSampleInput
-    from CelebrityDataset import CelebrityDataset, CelebrityCollateFn
+    from CelebrityDataset import CelebrityDataset, celebrity_collate_fn
     
     
     output_dir = Path(config.output_dir)
@@ -215,9 +150,12 @@ def lora_finetuning(config: LoraFinetuningConfig):
     # log accelerator state
     logger.info(accelerator.state)
     
-    stage_config = InpaintingConfig(precision=config.mixed_precision)
-    if config.preload_embeddings:
-        stage_config.device = "cpu"
+    stage_config = InpaintingConfig(
+        device=config.device,
+        precision=config.mixed_precision,
+        preloaded_feature_dino_path = config.preloaded_feature_dino_path,
+        preloaded_feature_clip_path = config.preloaded_feature_clip_path
+    )
     stage = InpaintingStage(stage_config)
     
     lora_config = LoraConfig(
@@ -256,21 +194,23 @@ def lora_finetuning(config: LoraFinetuningConfig):
     )
     
     train_dataset = CelebrityDataset(
-        config.root_dir, 
-        config.celebrity_name, 
-        config.image_resize, 
-        config.num_images, 
-        config.seed, 
-        config.max_samples,
+        root_dir=config.root_dir, 
+        celebrity_name=config.celebrity_name, 
+        image_size=config.image_resize, 
+        num_images=config.num_images, 
+        seed=config.seed, 
+        embedding_dict=stage.image_encoder_g_dict, # pass embeddings to threshold sim pairs
+        max_samples=config.max_samples,
         split_ratio=0.999
     )
     val_dataset = CelebrityDataset(
-        config.root_dir, 
-        config.celebrity_name, 
-        config.image_resize, 
-        config.num_images, 
-        config.seed, 
-        config.max_samples,
+        root_dir=config.root_dir, 
+        celebrity_name=config.celebrity_name, 
+        image_size=config.image_resize, 
+        num_images=config.num_images, 
+        seed=config.seed, 
+        embedding_dict=stage.image_encoder_g_dict, # pass embeddings to threshold sim pairs
+        max_samples=config.max_samples,
         split="val",
         split_ratio=0.999
     )
@@ -283,21 +223,9 @@ def lora_finetuning(config: LoraFinetuningConfig):
         batch_size=config.train_batch_size, 
         pin_memory=True, 
         num_workers=config.num_dataloader_workers, 
-        collate_fn= lambda batch : CelebrityCollateFn(batch, image_size=config.image_resize)
+        collate_fn= lambda batch : celebrity_collate_fn(batch, image_size=config.image_resize)
     )
-    output_embeddings_p = {}
-    output_embeddings_g = {}
-    if accelerator.is_main_process and config.preload_embeddings:
-        logger.info("Preloading embeddings")
-        output_embeddings_p = get_image_embeddings_p(stage.image_encoder_p, train_dataset, accelerator.device, stage.weight_dtype, config.image_resize)
-        output_embeddings_g = get_image_embeddings_g(stage.image_encoder_g, train_dataset, accelerator.device, stage.weight_dtype, config.image_resize)
-        logger.info(f"Preloaded embeddings for {len(output_embeddings_p)} images")
-        # since we are moved all to cpu, we need to move the model to the device
-        logger.info("move sd_model and vae to device")
-        stage.sd_model = stage.sd_model.to(config.device)
-        stage.vae = stage.vae.to(config.device)
     
-    accelerator.wait_for_everyone()
 
         
     # Scheduler and math around the number of training steps.
@@ -380,13 +308,17 @@ def lora_finetuning(config: LoraFinetuningConfig):
                     # Convert images to latent space
                     latents = stage.vae.encode(batch["source_target_image"]).latent_dist.sample() * stage.vae.config.scaling_factor
                     masked_latents = stage.vae.encode(batch["vae_source_mask_image"]).latent_dist.sample() * stage.vae.config.scaling_factor
-                    if config.preload_embeddings:
-                        cond_image_feature_p = torch.stack([output_embeddings_p[s_img_path] for s_img_path in batch["s_img_path"]], dim=0).to(accelerator.device, dtype=weight_dtype)
-                        cond_image_feature_g = torch.stack([output_embeddings_g[t_img_path] for t_img_path in batch["t_img_path"]], dim=0).to(accelerator.device, dtype=weight_dtype)
+                    
+                    if config.preloaded_feature_dino_path:
+                        cond_image_feature_p = torch.stack([stage.image_encoder_p_dict[s_img_path] for s_img_path in batch["s_img_path"]], dim=0).to(accelerator.device, dtype=weight_dtype)
                     else:
                         batch["source_image"] = batch["source_image"].to(accelerator.device, dtype=weight_dtype)
-                        batch["target_image"] = batch["target_image"].to(accelerator.device, dtype=weight_dtype)
                         cond_image_feature_p = stage.image_encoder_p(batch["source_image"]).last_hidden_state
+                        
+                    if config.preloaded_feature_clip_path:
+                        cond_image_feature_g = torch.stack([stage.image_encoder_g_dict[t_img_path] for t_img_path in batch["t_img_path"]], dim=0).to(accelerator.device, dtype=weight_dtype)
+                    else:
+                        batch["target_image"] = batch["target_image"].to(accelerator.device, dtype=weight_dtype)
                         cond_image_feature_g = stage.image_encoder_g(batch["target_image"]).image_embeds.unsqueeze(1)
                 
                 noise = torch.randn_like(latents)
@@ -449,9 +381,6 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 logger.info(f"Running validation at step {global_step}")
                 sd_model.eval()
                 stage.sd_model = sd_model
-                stage.image_encoder_p = stage.image_encoder_p.to(accelerator.device)
-                stage.image_encoder_g = stage.image_encoder_g.to(accelerator.device)
-                stage.device = accelerator.device
                 output_images = []
                 with torch.no_grad():
                     for idx in tqdm(range(len(val_dataset)), desc="Validation"):
@@ -461,8 +390,6 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 accelerator.log({
                     "outputs": wandb.Image(show_images(torch.stack(output_images, dim=1).squeeze(0)))
                 }, step=global_step)
-                stage.image_encoder_p = stage.image_encoder_p.to("cpu")
-                stage.image_encoder_g = stage.image_encoder_g.to("cpu")
                 sd_model.train()
 
     if accelerator.is_main_process:
@@ -476,7 +403,7 @@ def main():
     parser.add_argument(
         "--config_path",
         type=str,
-        default="config/lora_finetune_example.json",
+        default="config/mo_salah.json",
         help="Path to config JSON file"
     )
     args = parser.parse_args()
