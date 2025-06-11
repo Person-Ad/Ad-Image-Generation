@@ -288,8 +288,8 @@ def lora_finetuning(config: LoraFinetuningConfig):
     output_embeddings_g = {}
     if accelerator.is_main_process and config.preload_embeddings:
         logger.info("Preloading embeddings")
-        output_embeddings_p = get_image_embeddings_p(stage.image_encoder_p, train_dataset, stage.device, stage.weight_dtype, config.image_resize)
-        output_embeddings_g = get_image_embeddings_g(stage.image_encoder_g, train_dataset, stage.device, stage.weight_dtype, config.image_resize)
+        output_embeddings_p = get_image_embeddings_p(stage.image_encoder_p, train_dataset, accelerator.device, stage.weight_dtype, config.image_resize)
+        output_embeddings_g = get_image_embeddings_g(stage.image_encoder_g, train_dataset, accelerator.device, stage.weight_dtype, config.image_resize)
         logger.info(f"Preloaded embeddings for {len(output_embeddings_p)} images")
         # since we are moved all to cpu, we need to move the model to the device
         logger.info("move sd_model and vae to device")
