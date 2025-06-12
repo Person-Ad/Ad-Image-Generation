@@ -296,7 +296,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
         # accelerator.load_state(checkpoint_path)
         optimizer.load_state_dict(torch.load(checkpoint_path/"optimizer.bin", map_location="cpu"))
         lr_scheduler.load_state_dict(torch.load(checkpoint_path/"scheduler.bin", map_location="cpu"))
-        accelerator.scaler.load_state_dict(torch.load(checkpoint_path/"scalar.pt", map_location="cpu"))
+        accelerator.scaler.load_state_dict(torch.load(checkpoint_path/"scaler.pt, map_location="cpu"))
         # Restore RNG states
         rng_path = checkpoint_path / "random_states_0.pkl"
         with open(rng_path, "rb") as f:
