@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from accelerate import Accelerator
 from fastcore.script import call_parse
 from accelerate.logging import get_logger
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, PeftModel
 from transformers import CLIPImageProcessor
 from torch.utils.data import Dataset, DataLoader
 from diffusers.optimization import get_scheduler
@@ -291,7 +291,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
     if config.resume_from_checkpoint:
         checkpoint_path = Path(config.resume_from_checkpoint)
         logger.info(f"Resuming from checkpoint: {checkpoint_path}")
-        sd_model.load_pretrained(checkpoint_path)
+        sd_model = PeftModel.from_pretrained(sd_model, checkpoint_path)
         accelerator.load_state(checkpoint_path)
         # load global step and epoch from trainer state
         with open(Path(config.resume_from_checkpoint) / "trainer_state.json") as f:
