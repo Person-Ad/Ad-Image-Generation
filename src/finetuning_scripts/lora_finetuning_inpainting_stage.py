@@ -1,3 +1,5 @@
+import random
+import numpy as np
 import gc
 import json
 import math
@@ -300,10 +302,12 @@ def lora_finetuning(config: LoraFinetuningConfig):
         # Restore RNG states
         rng_path = checkpoint_path / "random_states_0.pkl"
         with open(rng_path, "rb") as f:
-            state = torch.load(f)
-        torch.set_rng_state(state["cpu_rng_state"])
+            rng_state = torch.load(f)
+        random.setstate(rng_state["random_state"])
+        np.random.set_state(rng_state["numpy_random_seed"])
+        torch.set_rng_state(rng_state["torch_manual_seed"])
         if torch.cuda.is_available():
-            torch.cuda.set_rng_state_all(state["cuda_rng_state_all"])
+            torch.cuda.set_rng_state_all(rng_state["torch_cuda_manual_seed"])
             
         # load global step and epoch from trainer state
         with open(Path(config.resume_from_checkpoint) / "trainer_state.json") as f:
