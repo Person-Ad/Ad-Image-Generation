@@ -291,7 +291,8 @@ def lora_finetuning(config: LoraFinetuningConfig):
     if config.resume_from_checkpoint:
         checkpoint_path = Path(config.resume_from_checkpoint)
         logger.info(f"Resuming from checkpoint: {checkpoint_path}")
-        sd_model = PeftModel.from_pretrained(sd_model, checkpoint_path)
+        sd_model.load_adapter(checkpoint_path, adapter_name="default")
+        # sd_model = PeftModel(sd_model).load_pretrained(checkpoint_path)
         accelerator.load_state(checkpoint_path)
         # load global step and epoch from trainer state
         with open(Path(config.resume_from_checkpoint) / "trainer_state.json") as f:
