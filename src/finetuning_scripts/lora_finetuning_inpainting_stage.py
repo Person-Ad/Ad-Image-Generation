@@ -387,25 +387,26 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 if global_step % config.train_save_steps == 0:
                     checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator)
 
+                if global_step % config.validate_every_n_steps == 0:
+                    del batch, latents, masked_latents, noise, timesteps, noisy_latents, unet_input, model_pred, target
+                    gc.collect()
+                    torch.cuda.empty_cache()
+
+                    logger.info(f"Running validation at step {global_step}")
+                    sd_model.eval()
+                    stage.sd_model = sd_model
+                    input_images = [InpaintingSampleInput.model_validate(sample) for sample in val_dataset]
+                    with torch.no_grad():
+                        output_images = stage(input_images)
+                    accelerator.log({
+                        "outputs": wandb.Image(show_images(output_images))
+                    }, step=global_step)
+                    sd_model.train()
+                    
             logs = {"loss": loss.item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
             
-            if accelerator.is_main_process and global_step % config.validate_every_n_steps == 0:
-                del batch, latents, masked_latents, noise, timesteps, noisy_latents, unet_input, model_pred, target
-                gc.collect()
-                torch.cuda.empty_cache()
-
-                logger.info(f"Running validation at step {global_step}")
-                sd_model.eval()
-                stage.sd_model = sd_model
-                input_images = [InpaintingSampleInput.model_validate(sample) for sample in val_dataset]
-                with torch.no_grad():
-                    output_images = stage(input_images)
-                accelerator.log({
-                    "outputs": wandb.Image(show_images(output_images))
-                }, step=global_step)
-                sd_model.train()
 
             if global_step >= config.max_train_steps:
                 break
