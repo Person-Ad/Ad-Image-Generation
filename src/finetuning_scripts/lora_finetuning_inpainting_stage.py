@@ -390,11 +390,8 @@ def lora_finetuning(config: LoraFinetuningConfig):
             logs = {"loss": loss.item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
-            if global_step >= config.max_train_steps:
-                break
             
             if accelerator.is_main_process and global_step % config.validate_every_n_steps == 0:
-                logger.info("freeing memory")
                 del batch, latents, masked_latents, noise, timesteps, noisy_latents, unet_input, model_pred, target
                 gc.collect()
                 torch.cuda.empty_cache()
@@ -402,17 +399,17 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 logger.info(f"Running validation at step {global_step}")
                 sd_model.eval()
                 stage.sd_model = sd_model
-                output_images = []
+                input_images = [InpaintingSampleInput.model_validate(sample) for sample in val_dataset]
                 with torch.no_grad():
-                    for idx in tqdm(range(len(val_dataset)), desc="Validation"):
-                        output = stage([InpaintingSampleInput.model_validate(val_dataset[idx])])
-                        output_images.append(output)
-                logger.info("logging images to wandb")
+                    output_images = stage(input_images)
                 accelerator.log({
-                    "outputs": wandb.Image(show_images(torch.stack(output_images, dim=1).squeeze(0)))
+                    "outputs": wandb.Image(show_images(output_images))
                 }, step=global_step)
                 sd_model.train()
 
+            if global_step >= config.max_train_steps:
+                break
+            
     if accelerator.is_main_process:
         checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator)
 
