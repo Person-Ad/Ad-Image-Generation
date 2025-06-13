@@ -137,10 +137,14 @@ class InpaintingProcessor:
         
 class InpaintingStage():
     
-    def __init__(self, config: InpaintingConfig) -> None:
+    def __init__(self, config: InpaintingConfig, accelerator = None) -> None:
         self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() and config.device == "cuda" else "cpu")
-        self.weight_dtype = torch.float16 if config.precision == "fp16" else torch.float32
+        if not accelerator:
+            self.device = torch.device("cuda" if torch.cuda.is_available() and config.device == "cuda" else "cpu")
+        else:
+            self.device = accelerator.device
+        
+        self.weight_dtype = torch.float16 if config.precision == "fp16" else torch.bfloat16 if config.precision == "bf16" else torch.float32  
 
         self.processor = InpaintingProcessor(self.device)
 
