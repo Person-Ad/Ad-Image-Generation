@@ -197,33 +197,6 @@ def lora_finetuning(config: LoraFinetuningConfig):
         eps=config.adam_epsilon,
     )
     
-    if config.resume_from_checkpoint:
-        checkpoint_path = Path(config.resume_from_checkpoint)
-        logger.info(f"Resuming from checkpoint: {checkpoint_path}")
-        sd_model.load_adapter(checkpoint_path, adapter_name="default")
-        # sd_model = PeftModel(sd_model).load_pretrained(checkpoint_path)
-        # accelerator.load_state(checkpoint_path)
-        optimizer.load_state_dict(torch.load(checkpoint_path/"optimizer.bin", map_location="cpu"))
-        lr_scheduler.load_state_dict(torch.load(checkpoint_path/"scheduler.bin", map_location="cpu"))
-        accelerator.scaler.load_state_dict(torch.load(checkpoint_path/"scaler.pt", map_location="cpu"))
-        # Restore RNG states
-        rng_path = checkpoint_path / "random_states_0.pkl"
-        with open(rng_path, "rb") as f:
-            rng_state = torch.load(f)
-        random.setstate(rng_state["random_state"])
-        np.random.set_state(rng_state["numpy_random_seed"])
-        torch.set_rng_state(rng_state["torch_manual_seed"])
-        if torch.cuda.is_available():
-            torch.cuda.set_rng_state_all(rng_state["torch_cuda_manual_seed"])
-            
-        # load global step and epoch from trainer state
-        with open(Path(config.resume_from_checkpoint) / "trainer_state.json") as f:
-            state = json.load(f)
-        global_step = state["global_step"]
-        first_epoch = state["epoch"]
-    else:
-        global_step = 0
-        first_epoch = 0
     
     train_dataset = CelebrityDataset(
         root_dir=config.root_dir, 
@@ -279,6 +252,34 @@ def lora_finetuning(config: LoraFinetuningConfig):
         num_cycles=config.lr_num_cycles,
         power=config.lr_power,
     )
+    
+    if config.resume_from_checkpoint:
+        checkpoint_path = Path(config.resume_from_checkpoint)
+        logger.info(f"Resuming from checkpoint: {checkpoint_path}")
+        sd_model.load_adapter(checkpoint_path, adapter_name="default")
+        # sd_model = PeftModel(sd_model).load_pretrained(checkpoint_path)
+        # accelerator.load_state(checkpoint_path)
+        optimizer.load_state_dict(torch.load(checkpoint_path/"optimizer.bin", map_location="cpu"))
+        lr_scheduler.load_state_dict(torch.load(checkpoint_path/"scheduler.bin", map_location="cpu"))
+        accelerator.scaler.load_state_dict(torch.load(checkpoint_path/"scaler.pt", map_location="cpu"))
+        # Restore RNG states
+        rng_path = checkpoint_path / "random_states_0.pkl"
+        with open(rng_path, "rb") as f:
+            rng_state = torch.load(f)
+        random.setstate(rng_state["random_state"])
+        np.random.set_state(rng_state["numpy_random_seed"])
+        torch.set_rng_state(rng_state["torch_manual_seed"])
+        if torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(rng_state["torch_cuda_manual_seed"])
+            
+        # load global step and epoch from trainer state
+        with open(Path(config.resume_from_checkpoint) / "trainer_state.json") as f:
+            state = json.load(f)
+        global_step = state["global_step"]
+        first_epoch = state["epoch"]
+    else:
+        global_step = 0
+        first_epoch = 0
     
     # Prepare everything with our `accelerator`
     sd_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
