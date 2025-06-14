@@ -135,6 +135,7 @@ def load_checkpoint(resume_from_checkpoint, model, optimizer, lr_scheduler, acce
     """
     checkpoint_path = Path(resume_from_checkpoint)
     logger.info(f"Resuming from checkpoint: {checkpoint_path}")
+    device_id = int(str(device_id).split(":")[-1]) if ":" in str(device_id) else 0
     
     model.load_adapter(checkpoint_path, adapter_name="default")
     # Load optimizer and scheduler states
