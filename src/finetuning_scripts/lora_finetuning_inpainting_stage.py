@@ -119,7 +119,7 @@ def checkpoint_model(model, output_dir, global_step, epoch, accelerator):
     logger.info(f"Saved full checkpoint to {checkpoint_path}")
 
 
-def load_checkpoint(resume_from_checkpoint, model, optimizer, lr_scheduler, accelerator):
+def load_checkpoint(resume_from_checkpoint, model, optimizer, lr_scheduler, accelerator, device_id=0):
     """
     Load model checkpoint and return global_step and first_epoch.
     
@@ -147,7 +147,7 @@ def load_checkpoint(resume_from_checkpoint, model, optimizer, lr_scheduler, acce
         accelerator.scaler.load_state_dict(torch.load(scaler_path, map_location="cpu"))
     
     # Restore RNG states
-    rng_path = checkpoint_path / "random_states_0.pkl"
+    rng_path = checkpoint_path / f"random_states_{device_id}.pkl"
     if rng_path.exists():
         with open(rng_path, "rb") as f:
             rng_state = torch.load(f, map_location="cpu")
@@ -309,7 +309,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
     )
     
     if config.resume_from_checkpoint:
-        global_step, first_epoch =  load_checkpoint(config.resume_from_checkpoint, sd_model, optimizer, lr_scheduler, accelerator)
+        global_step, first_epoch =  load_checkpoint(config.resume_from_checkpoint, sd_model, optimizer, lr_scheduler, accelerator, accelerator.device.index)
     else:
         global_step, first_epoch = 0, 0
     # Prepare everything with our `accelerator`

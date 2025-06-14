@@ -142,7 +142,7 @@ class CelebrityDataset(Dataset):
             raise ValueError(f"Not enough images in {self.cleaned_dir} to form pairs")
 
         if self.embedding_dict:
-            logger.info("Generating aligned pairs using embeddings")
+            logger.info(f"Generating aligned pairs using embeddings with {len(image_paths)} images")
             self.src_tar_pairs = []
             for src_path, tar_path in permutations(image_paths, 2):
                 if (
@@ -214,10 +214,12 @@ class CelebrityDataset(Dataset):
 if __name__ == "__main__":
     # Example embedding dictionary (for testing)
     embedding_dict = torch.load(BASE_DIR / "datasets/celebrities/mo_salah/clip.pt")
+    embedding_dict = {k.name: v for k, v in embedding_dict.items()}
     dataset = CelebrityDataset(
         celebrity_name="mo_salah",
         image_size=(1024, 1024),
         embedding_dict=embedding_dict,
+        similarity_threshold=0.8
     )
     dataloader = DataLoader(
         dataset,
@@ -230,10 +232,10 @@ if __name__ == "__main__":
     
     
     for idx, batch in enumerate(dataloader):
-        # show_images(batch['source_target_image']).save(f'all_pairs_{idx}.jpg')
-        logger.info(
-            f"Batch shapes: source_image={batch['source_image'].shape}, "
-            f"source_target_pose={batch['source_target_pose'].shape}, "
-            f"source_target_image={batch['source_target_image'].shape}"
-        )
-        break
+        show_images(batch['source_target_image']).save(f'all_pairs_{idx}.jpg')
+        # logger.info(
+        #     f"Batch shapes: source_image={batch['source_image'].shape}, "
+        #     f"source_target_pose={batch['source_target_pose'].shape}, "
+        #     f"source_target_image={batch['source_target_image'].shape}"
+        # )
+        # break

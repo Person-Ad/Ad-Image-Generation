@@ -89,7 +89,7 @@ class InpaintingProcessor:
 
         st_img = (Image.new("RGB", (image_size[0] * 2, image_size[1])))
         st_img.paste(s_img, (0, 0))
-        st_img.paste(t_img, (image_size[0], 0))
+        st_img.paste(black_img, (image_size[0], 0))
 
         s_pose = self.inference_pose(s_img) if not s_pose_path else Image.open(s_pose_path).convert("RGB").resize(image_size, Image.BICUBIC)
         t_pose = self.inference_pose(t_img) if not t_pose_path else Image.open(t_pose_path).convert("RGB").resize(image_size, Image.BICUBIC)
