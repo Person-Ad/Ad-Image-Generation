@@ -137,7 +137,7 @@ def load_checkpoint(resume_from_checkpoint, model, optimizer, lr_scheduler, acce
     logger.info(f"Resuming from checkpoint: {checkpoint_path}")
     device_id = int(str(device_id).split(":")[-1]) if ":" in str(device_id) else 0
     
-    model.load_adapter(checkpoint_path, adapter_name="default")
+    model.load_adapter(str(checkpoint_path), adapter_name="default")
     # Load optimizer and scheduler states
     optimizer.load_state_dict(torch.load(checkpoint_path/"optimizer.bin", map_location="cpu"))
     lr_scheduler.load_state_dict(torch.load(checkpoint_path/"scheduler.bin", map_location="cpu"))
