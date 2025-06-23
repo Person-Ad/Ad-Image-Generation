@@ -31,6 +31,8 @@ class InpaintingConfig(BaseModel):
     pretrained_model_path: str = "stabilityai/stable-diffusion-2-1-base"
     vae_model_path: str = "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/vae-ft-mse-840000-ema-pruned.ckpt"
     
+    # as checkpoint need to be loaded differently
+    use_ckpt_v2: bool = False
     # TODO: add sequential offloading option
     # sequential_offloading = False  # Whether offloading models one by one or not
     
@@ -161,7 +163,9 @@ class InpaintingStage():
 
         progress_bar.set_description("Loading UNet Model")
         self.unet = Stage2_InapintUNet2DConditionModel.from_pretrained(self.config.pretrained_model_path, subfolder="unet",
-                                                   in_channels=9, class_embed_type="projection" ,projection_class_embeddings_input_dim=1024,
+                                                   in_channels=9, 
+                                                   class_embed_type=(None if self.config.use_ckpt_v2 else "projection"),
+                                                   projection_class_embeddings_input_dim=(None if self.config.use_ckpt_v2 else 1024),
                                                   low_cpu_mem_usage=False, ignore_mismatched_sizes=True)
         self.unet.requires_grad_(False)
         
@@ -179,7 +183,8 @@ class InpaintingStage():
             self.image_encoder_p.requires_grad_(False)
         else:
             self.image_encoder_p_dict = torch.load(self.config.preloaded_feature_dino_path)
-            self.image_encoder_p_dict = {k.name: v for k, v in self.image_encoder_p_dict.items()}
+            if isinstance(list(self.image_encoder_p_dict.keys())[0], Path):
+                self.image_encoder_p_dict = {k.name: v for k, v in self.image_encoder_p_dict.items()}
             
             logger.info(f"loaded dino feats of {len(self.image_encoder_p_dict)} features")
             
@@ -193,13 +198,18 @@ class InpaintingStage():
             self.image_encoder_g.requires_grad_(False)
         else:
             self.image_encoder_g_dict = torch.load(self.config.preloaded_feature_clip_path)
-            self.image_encoder_g_dict = {k.name: v for k, v in self.image_encoder_g_dict.items()}
+            if isinstance(list(self.image_encoder_g_dict.keys())[0], Path):
+                self.image_encoder_g_dict = {k.name: v for k, v in self.image_encoder_g_dict.items()}
             logger.info(f"loaded clip feats of {len(self.image_encoder_g_dict)} features")
             
         progress_bar.update(1)
         progress_bar.set_description("Loading Full Checkpoint")
         self.sd_model = SDInPaintModel(self.unet)
-        self.sd_model.load_state_dict(torch.load(self.checkpoint_path)['module'])
+        # load state
+        state_dict = torch.load(self.checkpoint_path)['module']
+        if self.config.use_ckpt_v2:
+            state_dict = {k.replace("image_proj_model", "image_proj_model_p"):v for k,v in state_dict.items()}
+        self.sd_model.load_state_dict(state_dict)
         self.sd_model.requires_grad_(False)
         self.sd_model.to(self.device, dtype=self.weight_dtype)
 
