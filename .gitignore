@@ -177,7 +177,8 @@ assets
 # Ignore all .pt files
 *.pt
 # Except scaler.pt
-!scaler.pt
+# !scaler.pt
 *.onnx
-# checkpoint/
+checkpoint/
 wandb
+*.bin
