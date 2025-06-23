@@ -4,6 +4,11 @@ from pathlib import Path
 from tqdm.auto import tqdm
 from controlnet_aux import OpenposeDetector
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from constants import BASE_DIR
+
 def extract_poses(input_dir: Path, output_dir: Path, image_resize = (512, 512)):
     """
     Args:
@@ -24,3 +29,10 @@ def extract_poses(input_dir: Path, output_dir: Path, image_resize = (512, 512)):
         pose = openpose(image, detect_resolution=image.size[1], include_body=True, include_face=True)
         # 3. save image
         pose.save(output_dir / image_path.name)
+        
+if __name__ == "__main__":
+    extract_poses(
+        BASE_DIR / "datasets/celebrities/meh/filtered_faces_cleaned",
+        BASE_DIR / "datasets/celebrities/meh/poses",
+        image_resize=(256, 256)
+    )

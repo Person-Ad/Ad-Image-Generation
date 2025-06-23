@@ -52,7 +52,7 @@ def extract_image_folder_clip_features(input_dir: Path, device, weight_dtype, ou
             batch_embeds = image_encoder_g(batch_tensor).image_embeds.unsqueeze(1).to("cpu")
 
         for path, embed in zip(image_paths[i:i+batch_size], batch_embeds):
-            outputs[path] = embed
+            outputs[path.name] = embed
     
     if output_path:
         torch.save(outputs, output_path)    
@@ -101,7 +101,7 @@ def extract_image_folder_dino_features(input_dir: Path, device, weight_dtype, ou
             batch_embeds = image_encoder_p(batch_tensor).last_hidden_state.to("cpu")
 
         for path, embed in zip(image_paths[i:i+batch_size], batch_embeds):
-            outputs[path] = embed
+            outputs[path.name] = embed
     
     if output_path:
         torch.save(outputs, output_path)    
@@ -109,11 +109,11 @@ def extract_image_folder_dino_features(input_dir: Path, device, weight_dtype, ou
     return outputs
 
 if __name__ == "__main__":
-    celebrity_dir = BASE_DIR / "datasets/celebrities/mo_salah"
+    celebrity_dir = BASE_DIR / "datasets/celebrities/meh"
     input_dir = celebrity_dir / "cleaned"
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     weight_dtype = torch.float16
     
-    extract_image_folder_clip_features(input_dir, device, weight_dtype, celebrity_dir / "clip.pt", image_size = (512, 512), batch_size=32)
-    extract_image_folder_dino_features(input_dir, device, weight_dtype, celebrity_dir / "dino.pt", image_size = (512, 512), batch_size=32)
+    extract_image_folder_clip_features(input_dir, device, weight_dtype, celebrity_dir / "clip.pt", image_size = (256, 256), batch_size=32)
+    extract_image_folder_dino_features(input_dir, device, weight_dtype, celebrity_dir / "dino.pt", image_size = (256, 256), batch_size=32)

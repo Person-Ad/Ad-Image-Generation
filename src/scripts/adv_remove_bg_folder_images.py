@@ -219,14 +219,14 @@ def batch_process_with_different_settings(input_dir: Path, base_output_dir: Path
     )
 
 if __name__ == "__main__":
-    input_path = BASE_DIR / "datasets/celebrities/mo_salah/cropped"
-    output_path = BASE_DIR / "datasets/celebrities/mo_salah/cleaned"
+    input_path = BASE_DIR / "datasets/celebrities/meh/filtered_faces"
+    output_path = BASE_DIR / "datasets/celebrities/meh/filtered_faces_cleaned"
     
     # Basic usage with u2net_human_seg
     remove_bg_folder_images_advanced(
         input_dir=input_path,
         output_dir=output_path,
-        model_name='u2net_human_seg',
+        model_name='u2net',
         alpha_matting=True,  # Better edge quality
         save_mask=False,      # Save masks separately
         refine_edges=True    # Softer edges
