@@ -22,6 +22,7 @@ from transformers import CLIPImageProcessor
 from torch.utils.data import Dataset, DataLoader
 from diffusers.optimization import get_scheduler
 from diffusers.utils.import_utils import is_xformers_available
+from huggingface_hub import HfApi, HfFolder, Repository
 from loguru import logger
 # Local imports
 import os
@@ -34,6 +35,9 @@ UNET_TARGET_MODULES = ["to_k", "to_q", "to_v", "to_out.0"]
 # logger = get_logger(__name__)
 
 class LoraFinetuningConfig(BaseModel):
+    push_to_hub: bool = True
+    repo_id: str = "aliaagheis/pcdm_character_lora"
+    hf_token: str = None
     # Configuration for Dataset
     celebrity_name: str = 'mohamed_salah'
     root_dir: str = "datasets/celebrities"
@@ -89,16 +93,19 @@ class LoraFinetuningConfig(BaseModel):
     similarity_threshold: float = 0.7
     
     device: str = 'cuda'
-def checkpoint_model(model, output_dir, global_step, epoch, accelerator):
+def checkpoint_model(model, output_dir, global_step, epoch, accelerator, push_to_hub=False, repo_id=None, token=None):
     """
-    Save the model checkpoint.
-   
+    Save the model checkpoint, optionally push to Hugging Face Hub.
+
     Args:
         model: The model to save.
         output_dir: Directory to save the checkpoint.
         global_step: Current training step.
         epoch: Current epoch.
-        accelerator: Accelerator instance for distributed training.
+        accelerator: Accelerator instance.
+        push_to_hub: Whether to push to the Hugging Face Hub.
+        repo_id: Repository ID on Hugging Face (e.g., "username/repo_name").
+        token: Hugging Face token (optional, if not logged in).
     """
     checkpoint_path = output_dir / f"checkpoint-{global_step}"
     checkpoint_path.mkdir(parents=True, exist_ok=True)
@@ -117,6 +124,16 @@ def checkpoint_model(model, output_dir, global_step, epoch, accelerator):
         json.dump({"global_step": global_step, "epoch": epoch}, f)
    
     logger.info(f"Saved full checkpoint to {checkpoint_path}")
+    
+    # Push to Hugging Face Hub
+    if push_to_hub and repo_id:
+        logger.info(f"Pushing checkpoint to Hugging Face Hub: {repo_id}")
+        repo = Repository(local_dir=checkpoint_path, clone_from=repo_id, token=token)
+        repo.git_pull()
+        repo.git_add()
+        repo.git_commit(f"Checkpoint at step {global_step}, epoch {epoch}")
+        repo.git_push()
+        logger.info(f"Pushed to Hub: {repo_id}")
 
 
 def load_checkpoint(resume_from_checkpoint, model, optimizer, lr_scheduler, accelerator, device_id=0):
@@ -417,7 +434,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 global_step += 1
             
                 if global_step % config.train_save_steps == 0:
-                    checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator)
+                    checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, config.push_to_hub, config.repo_id, config.hf_token)
 
                 if global_step % config.validate_every_n_steps == 0:
                     del batch, latents, masked_latents, noise, timesteps, noisy_latents, unet_input, model_pred, target
@@ -444,7 +461,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 break
             
     if accelerator.is_main_process:
-        checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator)
+        checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, config.push_to_hub, config.repo_id, config.hf_token)
 
     accelerator.wait_for_everyone()
     accelerator.end_training()
