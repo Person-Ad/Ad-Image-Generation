@@ -13,6 +13,8 @@ from transformers import (
     CLIPImageProcessor, 
     Dinov2Model
 )
+import contextlib
+import gc
 
 import sys
 import os
@@ -34,7 +36,7 @@ class InpaintingConfig(BaseModel):
     # as checkpoint need to be loaded differently
     use_ckpt_v2: bool = False
     # TODO: add sequential offloading option
-    # sequential_offloading = False  # Whether offloading models one by one or not
+    sequential_offloading: bool = False  # Whether offloading models one by one or not
     
     user_prior_stage: bool = False # Whether to use user prior stage or Clip
     device: str = "cuda"  # Device to run the model on, e.g., 'cuda' or 'cpu'
@@ -53,6 +55,7 @@ class InpaintingSampleInput(BaseModel):
     s_pose_path: str | Path | None = None  # Optional path to the source pose image
     t_pose_path: str | Path | None = None  # Optional path to the target pose image
     image_size: tuple = (512, 512)  # Size of the images, default is (512, 512)
+    drop_tar_img: bool = False
     
 class InpaintingInferenceConfig(BaseModel):
     num_inference_steps: int = 50  # Number of inference steps for the model
@@ -76,7 +79,7 @@ class InpaintingProcessor:
         openpose = OpenposeDetector.from_pretrained("lllyasviel/ControlNet").to(self.device)
         return openpose(img, detect_resolution=img.size[0],  include_hand=True).resize(img.size, Image.BICUBIC)
         
-    def process_input(self, s_img_path, t_img_path, s_pose_path = None, t_pose_path = None, image_size=(512, 512)):
+    def process_input(self, s_img_path, t_img_path, s_pose_path = None, t_pose_path = None, image_size=(512, 512), drop_tar_img = False):
         s_img = Image.open(s_img_path).convert("RGB").resize(image_size, Image.BICUBIC)
         t_img = Image.open(t_img_path).convert("RGB").resize(image_size, Image.BICUBIC)
 
@@ -91,7 +94,7 @@ class InpaintingProcessor:
 
         st_img = (Image.new("RGB", (image_size[0] * 2, image_size[1])))
         st_img.paste(s_img, (0, 0))
-        st_img.paste(t_img, (image_size[0], 0))
+        st_img.paste((black_img if drop_tar_img else t_img), (image_size[0], 0))
 
         s_pose = self.inference_pose(s_img) if not s_pose_path else Image.open(s_pose_path).convert("RGB").resize(image_size, Image.BICUBIC)
         t_pose = self.inference_pose(t_img) if not t_pose_path else Image.open(t_pose_path).convert("RGB").resize(image_size, Image.BICUBIC)
@@ -155,6 +158,11 @@ class InpaintingStage():
             download_checkpoint(self.checkpoint_path.name, self.checkpoint_path.parent)
         
         self.load_pipeline()
+        
+        self.cache_root = Path(self.config.cache_dir or BASE_DIR / "embed_cache")
+        # Names include model-id so you can swap checkpoints without collisions
+        self._dino_db  = self.cache_root / f"dino.db"
+        self._clip_db  = self.cache_root / f"clip.db"
 
         
     def load_pipeline(self):
@@ -171,7 +179,7 @@ class InpaintingStage():
         
         progress_bar.update(1)
         progress_bar.set_description("Loading VAE Model")
-        self.vae = AutoencoderKL.from_single_file(self.config.vae_model_path, torch_dtype=self.weight_dtype).to(self.device)
+        self.vae = AutoencoderKL.from_single_file(self.config.vae_model_path, torch_dtype=self.weight_dtype)
         self.vae.requires_grad_(False)
         
         self.noise_scheduler = DDPMScheduler.from_pretrained(self.config.pretrained_model_path, subfolder="scheduler")
@@ -179,7 +187,7 @@ class InpaintingStage():
         progress_bar.update(1)
         progress_bar.set_description("Loading DinoV2 Model")
         if not self.config.preloaded_feature_dino_path:
-            self.image_encoder_p = Dinov2Model.from_pretrained("facebook/dinov2-giant").to(self.device, dtype=self.weight_dtype)
+            self.image_encoder_p = Dinov2Model.from_pretrained("facebook/dinov2-giant").to(dtype=self.weight_dtype)
             self.image_encoder_p.requires_grad_(False)
         else:
             self.image_encoder_p_dict = torch.load(self.config.preloaded_feature_dino_path)
@@ -192,7 +200,7 @@ class InpaintingStage():
         progress_bar.set_description("Loading Prior/Clip Model")
         if not self.config.preloaded_feature_clip_path:
             if not self.config.user_prior_stage:
-                self.image_encoder_g = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-H-14-laion2B-s32B-b79K").to(self.device, dtype=self.weight_dtype)
+                self.image_encoder_g = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-H-14-laion2B-s32B-b79K").to(dtype=self.weight_dtype)
             else:
                 raise NotImplementedError("User prior stage is not implemented yet.")
             self.image_encoder_g.requires_grad_(False)
@@ -211,18 +219,46 @@ class InpaintingStage():
             state_dict = {k.replace("image_proj_model", "image_proj_model_p"):v for k,v in state_dict.items()}
         self.sd_model.load_state_dict(state_dict)
         self.sd_model.requires_grad_(False)
-        self.sd_model.to(self.device, dtype=self.weight_dtype)
-
+        self.sd_model.to(dtype=self.weight_dtype)
+        
+        # move to gpu if not seq offloading
+        if not self.config.sequential_offloading:
+            self.to(self.device)
+            
         progress_bar.update(1)
         progress_bar.set_description("Pipeline Loaded")
         logger.info("pipeline loaded successfully")
         
     def to(self, device):
-        self.vae = self.vae.to(device)
-        self.image_encoder_p = self.image_encoder_p.to(device)
-        self.image_encoder_g = self.image_encoder_g.to(device)
+        vae = vae.to(device)
         self.sd_model = self.sd_model.to(device)
-        
+        if not self.config.preloaded_feature_dino_path:
+            self.image_encoder_p = self.image_encoder_p.to(device)
+        if not self.config.preloaded_feature_clip_path and not self.config.user_prior_stage:
+            self.image_encoder_g = self.image_encoder_g.to(device)
+            
+    # --------------------------------------------------------------------- #
+    # ✦ Helper context manager ✦
+    # --------------------------------------------------------------------- #
+    @contextlib.contextmanager
+    def _on_gpu(self, module):
+        """
+        Temporarily moves a nn.Module to GPU (self.device),
+        yields it, then pushes it back to CPU and frees VRAM.
+        No-op when sequential_offloading=False.
+        """
+        if self.config.sequential_offloading:
+            module.to(self.device, dtype=self.weight_dtype)
+        try:
+            yield module
+        finally:
+            if self.config.sequential_offloading:
+                module.to("cpu")
+                torch.cuda.empty_cache()
+                # a couple of extra lines never hurt when chasing leaks
+                gc.collect()
+    # def to(self, component, )
+    @torch.no_grad()
     def __call__(self, input_paths: list[InpaintingSampleInput], config: InpaintingInferenceConfig = InpaintingInferenceConfig()):
         """
         Args:
@@ -236,25 +272,40 @@ class InpaintingStage():
 
         for key in ["mask", "source_target_pose", "source_target_image", "vae_source_mask_image"]:
             inputs[key] = inputs[key].to(self.device, dtype=self.weight_dtype)
-    
-        with torch.no_grad():
+        # --------------------------------------------------------------- #
+        # 1. Encode images ➜ latents              (VAE: encode)          #
+        # --------------------------------------------------------------- #
+        with self._on_gpu(self.vae):
             # Convert images to latent space
             latents = self.vae.encode(inputs["source_target_image"]).latent_dist.sample() * self.vae.config.scaling_factor
             # Get the masked image latents
             masked_latents = self.vae.encode(inputs["vae_source_mask_image"]).latent_dist.sample() * self.vae.config.scaling_factor
-            # Get the image embedding for conditioning
-            if self.config.preloaded_feature_dino_path:
-                cond_image_feature_p = (torch.stack([ self.image_encoder_p_dict[sample.s_img_path.name] for sample in input_paths], dim=0)
-                                        .to(self.device, dtype=self.weight_dtype))
-            else:
-                cond_image_feature_p = self.image_encoder_p(inputs["source_image"].to(self.device, dtype=self.weight_dtype)).last_hidden_state
-            
-            if self.config.preloaded_feature_clip_path:
-                cond_image_feature_g = (torch.stack([ self.image_encoder_g_dict[sample.t_img_path.name] for sample in input_paths], dim=0)
-                                        .to(self.device, dtype=self.weight_dtype))
-            else:
-                cond_image_feature_g = self.image_encoder_g(inputs["target_image"].to(self.device, dtype=self.weight_dtype)).image_embeds.unsqueeze(1)
+        # --------------------------------------------------------------- #
+        # 2. Get conditioning features          (Dino & CLIP)            #    
+        # --------------------------------------------------------------- #
+        if self.config.preloaded_feature_dino_path:
+            cond_image_feature_p = torch.stack(
+                [self.image_encoder_p_dict[s.s_img_path.name] for s in input_paths],
+                dim=0,
+            ).to(self.device, dtype=self.weight_dtype)
+        else:
+            with self._on_gpu(self.image_encoder_p):
+                cond_image_feature_p = self.image_encoder_p(
+                    inputs["source_image"].to(self.device, dtype=self.weight_dtype)
+                ).last_hidden_state
 
+        if self.config.preloaded_feature_clip_path:
+            cond_image_feature_g = torch.stack(
+                [self.image_encoder_g_dict[s.t_img_path.name] for s in input_paths],
+                dim=0,
+            ).to(self.device, dtype=self.weight_dtype)
+        else:
+            with self._on_gpu(self.image_encoder_g):
+                cond_image_feature_g = (
+                    self.image_encoder_g(
+                        inputs["target_image"].to(self.device, dtype=self.weight_dtype)
+                    ).image_embeds.unsqueeze(1)
+                )
 
         ####################################################################
         # Denoising loop
@@ -263,37 +314,38 @@ class InpaintingStage():
         noise = torch.randn_like(latents)
         latents = self.noise_scheduler.add_noise(latents, noise, self.noise_scheduler.timesteps[0]).to(self.device, dtype=self.weight_dtype) 
         
-        for t in tqdm(self.noise_scheduler.timesteps):
-            unet_input = torch.cat([latents, inputs["mask"], masked_latents], dim=1)
-            t_tensor = torch.tensor([t], device=self.device, dtype=torch.float32)
+        with self._on_gpu(self.sd_model):
+            for t in tqdm(self.noise_scheduler.timesteps):
+                unet_input = torch.cat([latents, inputs["mask"], masked_latents], dim=1)
+                t_tensor = torch.tensor([t], device=self.device, dtype=torch.float32)
 
-            with torch.no_grad():
-                # CONDITIONAL prediction
-                noise_pred_cond = self.sd_model(
-                    unet_input,
-                    t_tensor,
-                    cond_image_feature_p,  # conditioned
-                    cond_image_feature_g,
-                    inputs["source_target_pose"],
-                )
+                with torch.no_grad():
+                    # CONDITIONAL prediction
+                    noise_pred_cond = self.sd_model(
+                        unet_input,
+                        t_tensor,
+                        cond_image_feature_p,  # conditioned
+                        cond_image_feature_g,
+                        inputs["source_target_pose"],
+                    )
 
-                # UNCONDITIONAL prediction
-                noise_pred_uncond = self.sd_model(
-                    unet_input,
-                    t_tensor,
-                    torch.zeros_like(cond_image_feature_p),  # unconditioned
-                    torch.zeros_like(cond_image_feature_g),
-                    torch.zeros_like(inputs["source_target_pose"]),
-                )
+                    # UNCONDITIONAL prediction
+                    noise_pred_uncond = self.sd_model(
+                        unet_input,
+                        t_tensor,
+                        torch.zeros_like(cond_image_feature_p),  # unconditioned
+                        torch.zeros_like(cond_image_feature_g),
+                        torch.zeros_like(inputs["source_target_pose"]),
+                    )
 
-                # CFG interpolation
-                noise_pred = noise_pred_uncond + config.guidance_scale * (noise_pred_cond - noise_pred_uncond)
-                # Denoising step
-                latents = self.noise_scheduler.step(noise_pred, t, latents).prev_sample
+                    # CFG interpolation
+                    noise_pred = noise_pred_uncond + config.guidance_scale * (noise_pred_cond - noise_pred_uncond)
+                    # Denoising step
+                    latents = self.noise_scheduler.step(noise_pred, t, latents).prev_sample
 
         outputs = latents / self.vae.config.scaling_factor
         # Ensure the output tensor matches the VAE's weight dtype
         outputs = outputs.to(dtype=self.weight_dtype)
-        with torch.no_grad():
+        with self._on_gpu(self.vae):
             outputs  = self.vae.decode(outputs).sample
         return outputs

@@ -8,9 +8,26 @@ import torchvision
 from PIL import Image
 import numpy as np
 from loguru import logger
-
+import hashlib, shelve
+from contextlib import contextmanager
 import wandb
 
+def _file_md5(path: Path, chunk_size: int = 1 << 20) -> str:
+    m = hashlib.md5()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            m.update(chunk)
+    return m.hexdigest()
+
+@contextmanager
+def _open_cache(db_path: Path):
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with shelve.open(str(db_path), writeback=True) as db:
+        yield db
+        
 def set_seed(seed):
     np.random.seed(seed)
     torch.random.manual_seed(seed)
