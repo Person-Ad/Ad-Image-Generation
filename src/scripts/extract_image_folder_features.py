@@ -52,7 +52,7 @@ def extract_image_folder_clip_features(input_dir: Path, device, weight_dtype, ou
             batch_embeds = image_encoder_g(batch_tensor).image_embeds.unsqueeze(1).to("cpu")
 
         for path, embed in zip(image_paths[i:i+batch_size], batch_embeds):
-            outputs[path.name] = embed
+            outputs[path] = embed
     
     if output_path:
         torch.save(outputs, output_path)    
@@ -101,7 +101,7 @@ def extract_image_folder_dino_features(input_dir: Path, device, weight_dtype, ou
             batch_embeds = image_encoder_p(batch_tensor).last_hidden_state.to("cpu")
 
         for path, embed in zip(image_paths[i:i+batch_size], batch_embeds):
-            outputs[path.name] = embed
+            outputs[path] = embed
     
     if output_path:
         torch.save(outputs, output_path)    
