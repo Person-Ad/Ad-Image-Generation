@@ -159,10 +159,10 @@ class InpaintingStage():
         
         self.load_pipeline()
         
-        self.cache_root = Path(self.config.cache_dir or BASE_DIR / "embed_cache")
-        # Names include model-id so you can swap checkpoints without collisions
-        self._dino_db  = self.cache_root / f"dino.db"
-        self._clip_db  = self.cache_root / f"clip.db"
+        # self.cache_root = Path(self.config.cache_dir or BASE_DIR / "embed_cache")
+        # # Names include model-id so you can swap checkpoints without collisions
+        # self._dino_db  = self.cache_root / f"dino.db"
+        # self._clip_db  = self.cache_root / f"clip.db"
 
         
     def load_pipeline(self):
