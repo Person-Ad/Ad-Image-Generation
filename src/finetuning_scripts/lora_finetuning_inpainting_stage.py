@@ -93,7 +93,7 @@ class LoraFinetuningConfig(BaseModel):
     similarity_threshold: float = 0.7
     
     device: str = 'cuda'
-def checkpoint_model(model, output_dir, global_step, epoch, accelerator, push_to_hub=False, repo_id=None, token=None):
+def checkpoint_model(model, output_dir, global_step, epoch, accelerator, hf_api=None, repo_id=None):
     """
     Save the model checkpoint, optionally push to Hugging Face Hub.
 
@@ -126,14 +126,13 @@ def checkpoint_model(model, output_dir, global_step, epoch, accelerator, push_to
     logger.info(f"Saved full checkpoint to {checkpoint_path}")
     
     # Push to Hugging Face Hub
-    if push_to_hub and repo_id:
-        logger.info(f"Pushing checkpoint to Hugging Face Hub: {repo_id}")
-        repo = Repository(local_dir=checkpoint_path, clone_from=repo_id, token=token)
-        repo.git_pull()
-        repo.git_add()
-        repo.git_commit(f"Checkpoint at step {global_step}, epoch {epoch}")
-        repo.git_push()
-        logger.info(f"Pushed to Hub: {repo_id}")
+    if hf_api and repo_id:
+        hf_api.upload_folder(
+            folder_path=checkpoint_path,
+            repo_id="aliaagheis/pcdm_character_lora",
+            repo_type="model",
+            ignore_patterns="model.safetensors", # Ignore all text logs
+        )
 
 
 def load_checkpoint(resume_from_checkpoint, model, optimizer, lr_scheduler, accelerator, device_id=0):
@@ -198,7 +197,8 @@ def lora_finetuning(config: LoraFinetuningConfig):
     
     output_dir = Path(config.output_dir)
     logging_dir = output_dir / "wandb"
-            
+    hf_api = HfApi(token=config.hf_token)
+    
     accelerator = Accelerator(
         gradient_accumulation_steps=config.gradient_accumulation_steps,
         mixed_precision=config.mixed_precision,
@@ -434,7 +434,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 global_step += 1
             
                 if global_step % config.train_save_steps == 0:
-                    checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, config.push_to_hub, config.repo_id, config.hf_token)
+                    checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, hf_api, config.repo_id)
 
                 if global_step % config.validate_every_n_steps == 0:
                     del batch, latents, masked_latents, noise, timesteps, noisy_latents, unet_input, model_pred, target
@@ -461,7 +461,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 break
             
     if accelerator.is_main_process:
-        checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, config.push_to_hub, config.repo_id, config.hf_token)
+        checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, hf_api, config.repo_id)
 
     accelerator.wait_for_everyone()
     accelerator.end_training()
