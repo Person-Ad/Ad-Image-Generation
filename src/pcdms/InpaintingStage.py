@@ -230,7 +230,7 @@ class InpaintingStage():
         logger.info("pipeline loaded successfully")
         
     def to(self, device):
-        vae = vae.to(device)
+        self.vae = self.vae.to(device)
         self.sd_model = self.sd_model.to(device)
         if not self.config.preloaded_feature_dino_path:
             self.image_encoder_p = self.image_encoder_p.to(device)
