@@ -47,6 +47,8 @@ class LoraFinetuningConfig(BaseModel):
     max_samples: int = 6000
     
     num_dataloader_workers: int = 2
+    imgp_drop_rate: float = 0.1
+    imgg_drop_rate: float = 0.1
     
     # Configuration for LoRA Finetuning
     lora_rank: int = 4
@@ -93,7 +95,7 @@ class LoraFinetuningConfig(BaseModel):
     similarity_threshold: float = 0.7
     
     device: str = 'cuda'
-def checkpoint_model(model, output_dir, global_step, epoch, accelerator, hf_api=None, repo_id=None):
+def checkpoint_model(model, output_dir, global_step, epoch, accelerator, hf_api=None, repo_id=None, celebrity_name=""):
     """
     Save the model checkpoint, optionally push to Hugging Face Hub.
 
@@ -103,9 +105,9 @@ def checkpoint_model(model, output_dir, global_step, epoch, accelerator, hf_api=
         global_step: Current training step.
         epoch: Current epoch.
         accelerator: Accelerator instance.
-        push_to_hub: Whether to push to the Hugging Face Hub.
+        hf_api: Hugging Face Hub API.
         repo_id: Repository ID on Hugging Face (e.g., "username/repo_name").
-        token: Hugging Face token (optional, if not logged in).
+        celebrity_name: under the folder name.
     """
     checkpoint_path = output_dir / f"checkpoint-{global_step}"
     checkpoint_path.mkdir(parents=True, exist_ok=True)
@@ -132,6 +134,8 @@ def checkpoint_model(model, output_dir, global_step, epoch, accelerator, hf_api=
             repo_id="aliaagheis/pcdm_character_lora",
             repo_type="model",
             ignore_patterns="model.safetensors", # Ignore all text logs
+            commit_description=f"upload lora finetuning {global_step}",
+            path_in_repo=celebrity_name + f"checkpoint-{global_step}"
         )
 
 
@@ -280,7 +284,9 @@ def lora_finetuning(config: LoraFinetuningConfig):
         embedding_dict=stage.image_encoder_g_dict, # pass embeddings to threshold sim pairs
         similarity_threshold=config.similarity_threshold,
         max_samples=config.max_samples,
-        split_ratio=config.split_ratio
+        split_ratio=config.split_ratio,
+        imgp_drop_rate=config.imgp_drop_rate,
+        imgg_drop_rate=config.imgg_drop_rate,
     )
     val_dataset = CelebrityDataset(
         root_dir=config.root_dir, 
@@ -434,7 +440,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 global_step += 1
             
                 if global_step % config.train_save_steps == 0:
-                    checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, hf_api, config.repo_id)
+                    checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, hf_api, config.repo_id, config.celebrity_name)
 
                 if global_step % config.validate_every_n_steps == 0:
                     del batch, latents, masked_latents, noise, timesteps, noisy_latents, unet_input, model_pred, target
@@ -461,7 +467,7 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 break
             
     if accelerator.is_main_process:
-        checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, hf_api, config.repo_id)
+        checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, hf_api, config.repo_id, config.celebrity_name)
 
     accelerator.wait_for_everyone()
     accelerator.end_training()

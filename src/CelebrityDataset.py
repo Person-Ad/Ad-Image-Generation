@@ -68,6 +68,8 @@ class CelebrityDataset(Dataset):
         max_samples: Optional[int] = 6000,
         split: str = "train",
         split_ratio: float = 0.8,
+        imgp_drop_rate=0.0,
+        imgg_drop_rate=0.0,
     ):
         """Dataset for celebrity image pairs with optional embedding-based alignment.
 
@@ -93,6 +95,8 @@ class CelebrityDataset(Dataset):
         self.similarity_threshold = similarity_threshold
         self.split = split
         self.processor = InpaintingProcessor()
+        self.imgp_drop_rate = imgp_drop_rate
+        self.imgg_drop_rate = imgg_drop_rate
 
         # Initialize directories
         self.images_dir = self.directory / "cropped"
@@ -198,16 +202,26 @@ class CelebrityDataset(Dataset):
                 "image_size": self.image_size,
             }
 
+        output = self.processor.process_input(
+            s_img_path,
+            t_img_path,
+            s_pose_path,
+            t_pose_path,
+            self.image_size,
+        )
+        
+        ## dropout s_img for dinov2
+        if random.random() < self.imgp_drop_rate:
+            output['source_image'] = torch.zeros(output['source_image'].shape)
+
+        ## dropout t_img_embed
+        if random.random() < self.imgg_drop_rate:
+            output['target_image'] = torch.zeros(output['target_image'].shape)
+            
         return {
             "s_img_path": s_img_path,
             "t_img_path": t_img_path,
-            **self.processor.process_input(
-                s_img_path,
-                t_img_path,
-                s_pose_path,
-                t_pose_path,
-                self.image_size,
-            ),
+            **output,
         }
 
 
