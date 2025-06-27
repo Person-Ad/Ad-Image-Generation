@@ -13,6 +13,7 @@ from PIL import Image
 from pathlib import Path
 from tqdm.auto import tqdm
 from pydantic import BaseModel
+import lpips
 import torch.nn.functional as F
 from accelerate import Accelerator
 from fastcore.script import call_parse
@@ -266,6 +267,10 @@ def lora_finetuning(config: LoraFinetuningConfig):
     sd_model.print_trainable_parameters()
     
 
+    lpips_loss =  lpips.LPIPS(net='vgg').to(accelerator.device).eval()
+    for p in lpips_loss.parameters():  p.requires_grad_(False)
+    alpha_lpips = 0.1 
+    
     optimizer = bnb.optim.AdamW8bit(
         params=sd_model.parameters(),
         lr=config.learning_rate,
@@ -425,7 +430,24 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 else:
                     raise ValueError(f"Unknown prediction type {stage.noise_scheduler.config.prediction_type}")
                 
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                mse_loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                
+                alpha_bar = stage.noise_scheduler.alphas_cumprod.to(latents.device)[timesteps]
+                alpha_bar = alpha_bar.view(-1, 1, 1, 1) # broadcast to H×W
+                # Estimate of the clean latent x0
+                if stage.noise_scheduler.config.prediction_type == "epsilon":
+                    pred_x0 = (noisy_latents - (1 - alpha_bar).sqrt() * model_pred) / alpha_bar.sqrt()
+                elif stage.noise_scheduler.config.prediction_type == "v_prediction":
+                    # v-prediction already parameterises x0 + ε: use the scheduler helper
+                    pred_x0 = stage.noise_scheduler.convert_model_output(  noisy_latents, model_pred, timesteps, 'x0' )
+                with torch.no_grad():                       # VAE weights are frozen
+                    tgt_img  = stage.vae.decode(latents / stage.vae.config.scaling_factor).sample
+                    pred_img = stage.vae.decode(pred_x0 / stage.vae.config.scaling_factor).sample
+                # LPIPS expects [-1,1]; also needs 4-D [B,3,H,W]
+
+                lpips_val = lpips_loss(pred_img, tgt_img).mean()
+                
+                loss = mse_loss + alpha_lpips_lpips * lpips_val
                 accelerator.backward(loss)
                 
                 if accelerator.sync_gradients:
