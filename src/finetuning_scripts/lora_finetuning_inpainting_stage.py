@@ -442,12 +442,12 @@ def lora_finetuning(config: LoraFinetuningConfig):
                     pred_x0 = stage.noise_scheduler.convert_model_output(  noisy_latents, model_pred, timesteps, 'x0' )
                 with torch.no_grad():                       # VAE weights are frozen
                     tgt_img  = stage.vae.decode(latents / stage.vae.config.scaling_factor).sample
-                    pred_img = stage.vae.decode(pred_x0 / stage.vae.config.scaling_factor).sample
+                    pred_img = stage.vae.decode(pred_x0.to(accelerator.device) / stage.vae.config.scaling_factor).sample
                 # LPIPS expects [-1,1]; also needs 4-D [B,3,H,W]
 
                 lpips_val = lpips_loss(pred_img, tgt_img).mean()
                 
-                loss = mse_loss + alpha_lpips_lpips * lpips_val
+                loss = mse_loss + alpha_lpips * lpips_val
                 accelerator.backward(loss)
                 
                 if accelerator.sync_gradients:
