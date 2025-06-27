@@ -461,10 +461,10 @@ def lora_finetuning(config: LoraFinetuningConfig):
                 progress_bar.update(1)
                 global_step += 1
             
-                if global_step % config.train_save_steps == 0:
+                if accelerator.is_main_process and global_step % config.train_save_steps == 0:
                     checkpoint_model(sd_model, output_dir, global_step, epoch, accelerator, hf_api, config.repo_id, config.celebrity_name)
 
-                if global_step % config.validate_every_n_steps == 0:
+                if accelerator.is_main_process and global_step % config.validate_every_n_steps == 0:
                     del batch, latents, masked_latents, noise, timesteps, noisy_latents, unet_input, model_pred, target
                     gc.collect()
                     torch.cuda.empty_cache()
